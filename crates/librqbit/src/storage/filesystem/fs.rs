@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -35,6 +35,7 @@ impl StorageFactory for FilesystemStorageFactory {
         Ok(FilesystemStorage {
             output_folder: RwLock::new(shared.output_folder()),
             opened_files: Default::default(),
+            pending_move: Default::default(),
         })
     }
 
@@ -47,6 +48,15 @@ pub struct FilesystemStorage {
     // Changed by move_storage(), which runs while the torrent does no I/O.
     output_folder: RwLock<PathBuf>,
     pub(crate) opened_files: Vec<OpenedFile>,
+    // The move that move_storage() made and finish_move_storage() hasn't ended yet.
+    pending_move: Mutex<Option<PendingMove>>,
+}
+
+struct PendingMove {
+    moved: relocate::MovedFiles,
+    old_folder: PathBuf,
+    files: Vec<Option<PathBuf>>,
+    was_open: Vec<bool>,
 }
 
 impl FilesystemStorage {
@@ -59,6 +69,7 @@ impl FilesystemStorage {
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: RwLock::new(self.output_folder.read().clone()),
+            pending_move: Default::default(),
         })
     }
 
@@ -66,19 +77,28 @@ impl FilesystemStorage {
         self.output_folder.read().clone()
     }
 
-    // Points every file of `relative_paths` at `folder` and opens the ones in `open`.
+    // Points every file of `relative_paths` at `folder` and opens the ones in `open`. Goes on
+    // past a file that fails, so that one bad file doesn't leave the others closed, and
+    // returns the first error.
     fn reopen_all(
         &self,
         folder: &Path,
         relative_paths: &[Option<PathBuf>],
         open: &[bool],
     ) -> anyhow::Result<()> {
+        let mut first_error = None;
         for ((file, rel), open) in self.opened_files.iter().zip(relative_paths).zip(open) {
-            if let Some(rel) = rel {
-                file.reopen(folder.join(rel), *open)?;
+            if let Some(rel) = rel
+                && let Err(e) = file.reopen(folder.join(rel), *open)
+            {
+                warn!("{e:#}");
+                first_error.get_or_insert(e);
             }
         }
-        Ok(())
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
@@ -203,9 +223,9 @@ impl TorrentStorage for FilesystemStorage {
         let src = folder.join(from);
         let dst = folder.join(to);
         file.with_closed(|_| {
-            // The same path in another case is the same file on a case-insensitive
-            // filesystem: let that through, it's a change of case.
-            if relocate::path_key(&src) != relocate::path_key(&dst) && relocate::exists(&dst) {
+            // A change of case only is the same file on a case-insensitive filesystem; on a
+            // case-sensitive one it's another file, which must not be overwritten.
+            if relocate::exists(&dst) && !relocate::same_file(&src, &dst) {
                 bail!("{dst:?} already exists");
             }
             let created = relocate::create_parents(&dst)?;
@@ -221,6 +241,10 @@ impl TorrentStorage for FilesystemStorage {
     }
 
     fn move_storage(&self, request: &MoveStorageRequest<'_>) -> anyhow::Result<MoveStorageOutcome> {
+        let mut pending = self.pending_move.lock();
+        if pending.is_some() {
+            bail!("bug: the previous move wasn't finished");
+        }
         let old_folder = self.output_folder();
         let new_folder = request.new_output_folder;
         // Windows can't rename open files; reopened below, at whichever place they end up.
@@ -241,23 +265,61 @@ impl TorrentStorage for FilesystemStorage {
                 );
             }
         };
-        if let Err(e) = self.reopen_all(new_folder, request.files, &was_open) {
-            for f in &self.opened_files {
-                f.close();
-            }
-            let mut e = e.context(format!("error opening the files at {new_folder:?}"));
-            if let Err(left) = moved.rollback() {
-                e = e.context(format!("and undoing the move failed: {left}"));
-            }
-            if let Err(re) = self.reopen_all(&old_folder, request.files, &was_open) {
-                e = e.context(format!(
-                    "and reopening the files at {old_folder:?} failed: {re:#}"
-                ));
-            }
-            return Err(e);
+        let move_ = PendingMove {
+            moved,
+            old_folder,
+            files: request.files.to_vec(),
+            was_open,
+        };
+        if let Err(e) = self.reopen_all(new_folder, request.files, &move_.was_open) {
+            let e = e.context(format!("error opening the files at {new_folder:?}"));
+            return Err(match self.undo_move(move_) {
+                Ok(()) => e,
+                Err(ue) => e.context(format!("{ue:#}")),
+            });
         }
         *self.output_folder.write() = new_folder.to_owned();
-        Ok(moved.commit())
+        let outcome = move_.moved.outcome();
+        *pending = Some(move_);
+        Ok(outcome)
+    }
+
+    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
+        let Some(move_) = self.pending_move.lock().take() else {
+            // move_storage() had nothing to move.
+            return Ok(());
+        };
+        if commit {
+            move_.moved.commit();
+            return Ok(());
+        }
+        self.undo_move(move_)
+            .context("error undoing the move of the files")
+    }
+}
+
+impl FilesystemStorage {
+    // Moves the files of `move_` back and opens them at the old folder again. The error says
+    // which files couldn't be put back.
+    fn undo_move(&self, move_: PendingMove) -> anyhow::Result<()> {
+        for f in &self.opened_files {
+            f.close();
+        }
+        let mut errors = Vec::new();
+        if let Err(left) = move_.moved.rollback() {
+            errors.push(format!("undoing the move failed: {left}"));
+        }
+        if let Err(e) = self.reopen_all(&move_.old_folder, &move_.files, &move_.was_open) {
+            errors.push(format!(
+                "reopening the files at {:?} failed: {e:#}",
+                move_.old_folder
+            ));
+        }
+        *self.output_folder.write() = move_.old_folder;
+        match errors.is_empty() {
+            true => Ok(()),
+            false => bail!("{}", errors.join("; ")),
+        }
     }
 }
 
@@ -296,6 +358,7 @@ mod tests {
         FilesystemStorage {
             output_folder: RwLock::new(folder.to_owned()),
             opened_files,
+            pending_move: Default::default(),
         }
     }
 
@@ -365,6 +428,7 @@ mod tests {
             .unwrap();
         assert!(outcome.adopted_files.is_empty());
         assert_eq!(s.output_folder(), new);
+        s.finish_move_storage(true).unwrap();
         assert!(!old.join("x").exists());
         s.pwrite_all(2, 0, b"B").unwrap();
         assert_eq!(std::fs::read(new.join("b")).unwrap(), b"B");

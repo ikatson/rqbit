@@ -140,4 +140,8 @@ impl TorrentStorage for InMemoryExampleStorage {
     ) -> anyhow::Result<MoveStorageOutcome> {
         Ok(MoveStorageOutcome::default())
     }
+
+    fn finish_move_storage(&self, _commit: bool) -> anyhow::Result<()> {
+        Ok(())
+    }
 }

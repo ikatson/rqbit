@@ -4,7 +4,7 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read, Seek, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -20,8 +20,12 @@ const COPY_BUFFER_LEN: usize = 1024 * 1024;
 
 /// Moves the file `src` to `dst`, which must not exist: a rename when the two are on the
 /// same filesystem, otherwise a copy (flushed to disk and length-checked) followed by the
-/// removal of `src`. On error, `src` is where it was and `dst` doesn't exist.
+/// removal of `src`. A symbolic link is moved as a link to the same file. On error, `src` is
+/// where it was and `dst` doesn't exist.
 pub(crate) fn move_file(src: &Path, dst: &Path, cancel: &CancellationToken) -> anyhow::Result<()> {
+    if fs::symlink_metadata(src).is_ok_and(|m| m.file_type().is_symlink()) {
+        return move_symlink(src, dst);
+    }
     match fs::rename(src, dst) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
@@ -32,16 +36,67 @@ pub(crate) fn move_file(src: &Path, dst: &Path, cancel: &CancellationToken) -> a
     }
 }
 
-/// The cross-filesystem half of [`move_file`].
+// A link with a relative target would point elsewhere from another directory (and a rename
+// can't cross filesystems), so the link is made again at `dst`, pointing where `src` did.
+fn move_symlink(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    let target = fs::read_link(src).with_context(|| format!("error reading the link {src:?}"))?;
+    let target = match src.parent() {
+        Some(dir) if target.is_relative() => dir.join(target),
+        _ => target,
+    };
+    make_symlink(&target, dst)
+        .with_context(|| format!("error making a link to {target:?} at {dst:?}"))?;
+    if let Err(e) = fs::remove_file(src) {
+        remove_leftover(dst);
+        return Err(e).with_context(|| format!("error removing the link {src:?}"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn make_symlink(target: &Path, link: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn make_symlink(target: &Path, link: &Path) -> io::Result<()> {
+    std::os::windows::fs::symlink_file(target, link)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn make_symlink(_target: &Path, _link: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "symbolic links aren't supported on this platform",
+    ))
+}
+
+/// The cross-filesystem half of [`move_file`]. The copy is made under a temporary name next
+/// to `dst` ([`partial_path`]) and gets its name only once complete and flushed, so an
+/// interrupted copy (even by a crash) never looks like the file.
 pub(crate) fn copy_then_remove(
     src: &Path,
     dst: &Path,
     cancel: &CancellationToken,
 ) -> anyhow::Result<()> {
-    if let Err(e) = copy_and_sync(src, dst, cancel) {
-        remove_leftover(dst);
+    if exists(dst) {
+        bail!("{dst:?} already exists");
+    }
+    let partial = partial_path(dst)?;
+    // What a copy interrupted by a crash left.
+    remove_leftover(&partial);
+    // Created here, so that only a copy made by this call is ever removed below.
+    let to = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .with_context(|| format!("error creating {partial:?}"))?;
+    let copied = copy_and_sync(src, to, &partial, cancel).and_then(|()| publish(&partial, dst));
+    if let Err(e) = copied {
+        remove_leftover(&partial);
         return Err(e);
     }
+    sync_parent(dst);
     if let Err(e) = fs::remove_file(src) {
         // Two copies would leave the caller unsure which one is the file: keep the original.
         remove_leftover(dst);
@@ -49,6 +104,41 @@ pub(crate) fn copy_then_remove(
             .with_context(|| format!("error removing {src:?} after copying it to {dst:?}"));
     }
     Ok(())
+}
+
+/// The temporary name a copy to `path` is made under.
+pub(crate) fn partial_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let name = path
+        .file_name()
+        .with_context(|| format!("{path:?} has no file name"))?
+        .to_string_lossy();
+    Ok(path.with_file_name(format!(".{name}.rqbit-partial")))
+}
+
+// Gives the finished copy at `partial` the name `dst`, without replacing a file that appeared
+// there meanwhile.
+fn publish(partial: &Path, dst: &Path) -> anyhow::Result<()> {
+    match fs::hard_link(partial, dst) {
+        Ok(()) => {
+            if let Err(e) = fs::remove_file(partial) {
+                warn!(
+                    ?partial,
+                    "error removing the temporary name of a copy: {e:#}"
+                );
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => bail!("{dst:?} already exists"),
+        // A filesystem without hard links (FAT, exFAT): a rename, which would replace a file
+        // silently, after a last look.
+        Err(_) => {
+            if exists(dst) {
+                bail!("{dst:?} already exists");
+            }
+            fs::rename(partial, dst)
+                .with_context(|| format!("error renaming {partial:?} to {dst:?}"))
+        }
+    }
 }
 
 fn remove_leftover(path: &Path) {
@@ -59,17 +149,18 @@ fn remove_leftover(path: &Path) {
     }
 }
 
-fn copy_and_sync(src: &Path, dst: &Path, cancel: &CancellationToken) -> anyhow::Result<()> {
+fn copy_and_sync(
+    src: &Path,
+    mut to: File,
+    dst: &Path,
+    cancel: &CancellationToken,
+) -> anyhow::Result<()> {
     let mut from = File::open(src).with_context(|| format!("error opening {src:?}"))?;
     let from_meta = from
         .metadata()
         .with_context(|| format!("error reading metadata of {src:?}"))?;
-    let mut to = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(dst)
-        .with_context(|| format!("error creating {dst:?}"))?;
     let mut buf = vec![0u8; COPY_BUFFER_LEN];
+    let mut total = 0u64;
     loop {
         if cancel.is_cancelled() {
             bail!("cancelled while copying {src:?} to {dst:?}");
@@ -81,9 +172,23 @@ fn copy_and_sync(src: &Path, dst: &Path, cancel: &CancellationToken) -> anyhow::
             Err(e) => return Err(e).with_context(|| format!("error reading {src:?}")),
         };
         let chunk = buf.get(..read).context("bug: read more than the buffer")?;
-        to.write_all(chunk)
-            .with_context(|| format!("error writing {dst:?}"))?;
+        let len = u64::try_from(read).context("bug: buffer longer than u64")?;
+        // Torrent files are preallocated and filled as pieces come: skipping zeros keeps the
+        // copy as sparse as the source on filesystems that can do it.
+        if chunk.iter().all(|b| *b == 0) {
+            to.seek(io::SeekFrom::Current(
+                i64::try_from(len).context("chunk too long")?,
+            ))
+            .with_context(|| format!("error seeking in {dst:?}"))?;
+        } else {
+            to.write_all(chunk)
+                .with_context(|| format!("error writing {dst:?}"))?;
+        }
+        total += len;
     }
+    // Gives the file the zeros it ends with, if it does.
+    to.set_len(total)
+        .with_context(|| format!("error setting the length of {dst:?}"))?;
     to.sync_all()
         .with_context(|| format!("error flushing {dst:?} to disk"))?;
     let copied = to
@@ -96,9 +201,109 @@ fn copy_and_sync(src: &Path, dst: &Path, cancel: &CancellationToken) -> anyhow::
             from_meta.len()
         );
     }
-    fs::set_permissions(dst, from_meta.permissions())
-        .with_context(|| format!("error copying the permissions of {src:?} to {dst:?}"))?;
+    // The data is what matters; a filesystem that can't take the permissions (FAT, some
+    // network shares) still holds a good copy.
+    if let Err(e) = fs::set_permissions(dst, from_meta.permissions()) {
+        warn!(?src, ?dst, "error copying the permissions: {e:#}");
+    }
     Ok(())
+}
+
+// Makes the new directory entry of `path` durable before the source goes away. Not every
+// filesystem can sync a directory, so a failure is only logged.
+#[cfg(unix)]
+fn sync_parent(path: &Path) {
+    let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) else {
+        return;
+    };
+    if let Err(e) = File::open(parent).and_then(|d| d.sync_all()) {
+        debug!(?parent, "error flushing the directory to disk: {e:#}");
+    }
+}
+
+// Directories can't be opened as files here.
+#[cfg(not(unix))]
+fn sync_parent(_path: &Path) {}
+
+/// Whether the two paths name the same existing file (following links): a change of case
+/// on a case-insensitive filesystem, another name of the same directory, a hard link.
+pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (fs::metadata(a), fs::metadata(b)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // The canonical path has the case, and the volume, the filesystem stores.
+        match (fs::canonicalize(a), fs::canonicalize(b)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+/// `path` with links, `.` and the spelling of the existing part resolved by the filesystem
+/// (as far as it exists; the missing rest is appended as given), to compare folders by.
+pub(crate) fn resolve_path(path: &Path) -> PathBuf {
+    let mut existing = path;
+    let mut missing = Vec::new();
+    loop {
+        let probe = if existing.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            existing
+        };
+        if let Ok(mut resolved) = fs::canonicalize(probe) {
+            resolved.extend(missing.iter().rev());
+            return resolved;
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_owned());
+                existing = parent;
+            }
+            _ => return path.to_owned(),
+        }
+    }
+}
+
+// Whether the two files hold the same bytes.
+fn same_content(a: &Path, b: &Path, cancel: &CancellationToken) -> anyhow::Result<bool> {
+    let mut fa = File::open(a).with_context(|| format!("error opening {a:?}"))?;
+    let mut fb = File::open(b).with_context(|| format!("error opening {b:?}"))?;
+    let mut ba = vec![0u8; COPY_BUFFER_LEN];
+    let mut bb = vec![0u8; COPY_BUFFER_LEN];
+    loop {
+        if cancel.is_cancelled() {
+            bail!("cancelled while comparing {a:?} with {b:?}");
+        }
+        let read = read_full(&mut fa, &mut ba).with_context(|| format!("error reading {a:?}"))?;
+        let read_b = read_full(&mut fb, &mut bb).with_context(|| format!("error reading {b:?}"))?;
+        if ba.get(..read) != bb.get(..read_b) {
+            return Ok(false);
+        }
+        if read == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+// Reads until `buf` is full or the file ends.
+fn read_full(f: &mut File, buf: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0;
+    while let Some(rest) = buf.get_mut(filled..).filter(|r| !r.is_empty()) {
+        match f.read(rest) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
 }
 
 /// Creates the directories `path` needs and returns the ones that didn't exist, outermost
@@ -163,27 +368,91 @@ pub(crate) fn exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
+// The length of the file at `path`, following a link; `None` if there's no file. A link to
+// nothing counts as no file: it has no data to move.
 fn file_len(path: &Path) -> Option<u64> {
-    fs::symlink_metadata(path)
+    fs::metadata(path)
         .ok()
         .filter(|m| m.is_file())
         .map(|m| m.len())
 }
 
-// A free name next to `path` to keep what was there aside while it's replaced.
-fn aside_path(path: &Path) -> anyhow::Result<PathBuf> {
+// How many names `aside_path` tries.
+const MAX_ASIDE_NAMES: u32 = 1000;
+
+// The `n`th name next to `path` to keep what was there aside under.
+fn aside_candidate(path: &Path, n: u32) -> anyhow::Result<PathBuf> {
     let name = path
         .file_name()
         .with_context(|| format!("{path:?} has no file name"))?
-        .to_string_lossy()
-        .into_owned();
-    for n in 0u32..1000 {
-        let candidate = path.with_file_name(format!(".{name}.rqbit-replaced-{n}"));
+        .to_string_lossy();
+    Ok(path.with_file_name(format!(".{name}.rqbit-replaced-{n}")))
+}
+
+// A free name next to `path` to keep what was there aside while it's replaced: the first
+// free one, so the names in use are consecutive and the last one is the newest.
+fn aside_path(path: &Path) -> anyhow::Result<PathBuf> {
+    for n in 0..MAX_ASIDE_NAMES {
+        let candidate = aside_candidate(path, n)?;
         if !exists(&candidate) {
             return Ok(candidate);
         }
     }
     bail!("no free name to set {path:?} aside")
+}
+
+// The name `aside_path` gave last for `path`, if it's in use.
+fn last_aside(path: &Path) -> Option<PathBuf> {
+    let mut last = None;
+    for n in 0..MAX_ASIDE_NAMES {
+        let candidate = aside_candidate(path, n).ok()?;
+        if !exists(&candidate) {
+            break;
+        }
+        last = Some(candidate);
+    }
+    last
+}
+
+/// Puts files back at `src` after a move from `src` to `dst` (one pair per file) was
+/// interrupted by a crash; a move that fails undoes itself. The pairs are the files that
+/// existed at `src` when the move started. For each: a half-done copy at either end is
+/// removed; if the file is no longer at `src` but at `dst`, it's moved back; then a file
+/// that an [`MoveStorageMode::Overwrite`] set aside at `dst` gets its name back. Nothing else
+/// is touched. Returns a description of every file it couldn't put back.
+pub(crate) fn undo_interrupted_move(pairs: &[(PathBuf, PathBuf)]) -> Result<(), String> {
+    let never = CancellationToken::new();
+    let mut failures = Vec::new();
+    for (src, dst) in pairs {
+        if src == dst {
+            continue;
+        }
+        for path in [src, dst] {
+            if let Ok(partial) = partial_path(path) {
+                remove_leftover(&partial);
+            }
+        }
+        if !exists(src) && exists(dst) {
+            let undone = create_parents(src).and_then(|_| move_file(dst, src, &never));
+            if let Err(e) = undone {
+                failures.push(format!("{src:?} is at {dst:?} ({e:#})"));
+                continue;
+            }
+        }
+        if !exists(dst)
+            && let Some(aside) = last_aside(dst)
+            && let Err(e) = fs::rename(&aside, dst)
+        {
+            failures.push(format!(
+                "the file that was at {dst:?} is at {aside:?} ({e:#})"
+            ));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 enum Step {
@@ -212,9 +481,16 @@ pub(crate) struct MovedFiles {
 }
 
 impl MovedFiles {
-    /// Finishes the move: removes what was replaced, the sources of adopted files of equal
-    /// length, and the source directories that became empty.
-    pub(crate) fn commit(self) -> MoveStorageOutcome {
+    /// What the move did, to tell the caller.
+    pub(crate) fn outcome(&self) -> MoveStorageOutcome {
+        MoveStorageOutcome {
+            adopted_files: self.adopted_files.clone(),
+        }
+    }
+
+    /// Finishes the move: removes what was replaced, the sources of adopted files that
+    /// hold the same bytes, and the source directories that became empty.
+    pub(crate) fn commit(self) {
         for step in &self.steps {
             let (relative, to_remove) = match step {
                 Step::Moved {
@@ -234,9 +510,6 @@ impl MovedFiles {
                 );
             }
             remove_empty_parents(&self.old_folder, relative);
-        }
-        MoveStorageOutcome {
-            adopted_files: self.adopted_files,
         }
     }
 
@@ -285,12 +558,25 @@ fn with_rollback(moved: MovedFiles, error: anyhow::Error) -> anyhow::Error {
 
 /// Moves the files of `request` from `old_folder` to `request.new_output_folder`, following
 /// `request.mode` (see [`MoveStorageMode`]). Everything that can be checked is checked before
-/// anything is touched; on error everything moved so far is moved back.
+/// anything is touched; on error everything moved so far is moved back. Folders are compared
+/// as the filesystem resolves them (links, `.`, `..`, case): another name of the old folder
+/// moves nothing.
 pub(crate) fn move_files(
     old_folder: &Path,
     request: &MoveStorageRequest<'_>,
 ) -> anyhow::Result<MovedFiles> {
     let new_folder = request.new_output_folder;
+    let mut moved = MovedFiles {
+        old_folder: old_folder.to_owned(),
+        steps: Vec::new(),
+        created_dirs: Vec::new(),
+        adopted_files: Vec::new(),
+    };
+    let old_resolved = resolve_path(old_folder);
+    let new_resolved = resolve_path(new_folder);
+    if old_resolved == new_resolved {
+        return Ok(moved);
+    }
     if let Ok(meta) = fs::metadata(new_folder)
         && !meta.is_dir()
     {
@@ -305,14 +591,14 @@ pub(crate) fn move_files(
         .collect::<Vec<_>>();
     let sources = files
         .iter()
-        .map(|(_, rel)| path_key(&old_folder.join(rel)))
+        .map(|(_, rel)| path_key(&old_resolved.join(rel)))
         .collect::<std::collections::HashSet<_>>();
     for (_, rel) in &files {
         if !is_plain_relative(rel) {
             bail!("{rel:?} isn't a relative path inside the output folder");
         }
         let dst = new_folder.join(rel);
-        if sources.contains(&path_key(&dst)) {
+        if sources.contains(&path_key(&new_resolved.join(rel))) {
             bail!(
                 "{dst:?} is where a file of the torrent is now; moving between {old_folder:?} and \
                  {new_folder:?} would overwrite it"
@@ -328,12 +614,6 @@ pub(crate) fn move_files(
         }
     }
 
-    let mut moved = MovedFiles {
-        old_folder: old_folder.to_owned(),
-        steps: Vec::new(),
-        created_dirs: Vec::new(),
-        adopted_files: Vec::new(),
-    };
     for (idx, rel) in files {
         if let Err(e) = move_one(&mut moved, idx, rel, new_folder, request) {
             return Err(with_rollback(moved, e));
@@ -358,17 +638,32 @@ fn move_one(
     let dst_len = file_len(&dst);
 
     if exists(&dst) {
-        let adopt = match request.mode {
+        // Another name of the source (a hard link, a linked directory): the file is at the
+        // destination already, and removing the source could remove it.
+        if same_file(&src, &dst) {
+            return Ok(());
+        }
+        let remove_src = match request.mode {
             MoveStorageMode::FailIfExists => bail!("{dst:?} already exists"),
-            MoveStorageMode::KeepExisting => true,
+            MoveStorageMode::KeepExisting => match src_len {
+                // Only the same bytes make the source redundant.
+                Some(len) if Some(len) == dst_len && same_content(&src, &dst, request.cancel)? => {
+                    Some(Some(src.clone()))
+                }
+                _ => Some(None),
+            },
             // With nothing to replace it with, what's there stays and is used.
-            MoveStorageMode::Overwrite => src_len.is_none(),
+            MoveStorageMode::Overwrite if src_len.is_none() => Some(None),
+            MoveStorageMode::Overwrite => None,
         };
-        if adopt {
-            moved.adopted_files.push(idx);
+        if let Some(remove_src) = remove_src {
+            // A file identical to the torrent's own needs no check.
+            if remove_src.is_none() {
+                moved.adopted_files.push(idx);
+            }
             moved.steps.push(Step::Adopted {
                 relative: rel.to_owned(),
-                remove_src: (src_len.is_some() && src_len == dst_len).then_some(src),
+                remove_src,
             });
             return Ok(());
         }
@@ -527,8 +822,8 @@ mod tests {
             &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
         )
         .unwrap();
-        let outcome = moved.commit();
-        assert!(outcome.adopted_files.is_empty());
+        assert!(moved.outcome().adopted_files.is_empty());
+        moved.commit();
         assert_eq!(read(&new.join("d/one")), b"one");
         assert_eq!(read(&new.join("two")), b"two");
         assert!(
@@ -549,8 +844,9 @@ mod tests {
             let new = dir.path().join("new");
             write(&old.join("same"), b"ours");
             write(&old.join("diff"), b"ours");
-            write(&new.join("same"), b"THEM");
-            write(&new.join("diff"), b"theirs-longer");
+            write(&new.join("same"), b"ours");
+            // Same length, other bytes.
+            write(&new.join("diff"), b"THEM");
             (dir, old, new)
         };
 
@@ -565,34 +861,34 @@ mod tests {
         assert_eq!(read(&old.join("same")), b"ours");
 
         let (_dir, old, new) = setup();
-        let outcome = move_files(
+        let moved = move_files(
             &old,
             &request(&new, &files, MoveStorageMode::Overwrite, &cancel),
         )
-        .unwrap()
-        .commit();
-        assert!(outcome.adopted_files.is_empty());
+        .unwrap();
+        assert!(moved.outcome().adopted_files.is_empty());
+        moved.commit();
         assert_eq!(read(&new.join("same")), b"ours");
         assert_eq!(read(&new.join("diff")), b"ours");
         assert!(!old.join("same").exists());
         assert_eq!(std::fs::read_dir(&new).unwrap().count(), 2, "no leftovers");
 
         let (_dir, old, new) = setup();
-        let outcome = move_files(
+        let moved = move_files(
             &old,
             &request(&new, &files, MoveStorageMode::KeepExisting, &cancel),
         )
-        .unwrap()
-        .commit();
-        assert_eq!(outcome.adopted_files, vec![0, 1]);
-        assert_eq!(read(&new.join("same")), b"THEM");
-        assert_eq!(read(&new.join("diff")), b"theirs-longer");
-        assert!(!old.join("same").exists(), "same length: source removed");
+        .unwrap();
         assert_eq!(
-            read(&old.join("diff")),
-            b"ours",
-            "other length: source kept"
+            moved.outcome().adopted_files,
+            vec![1],
+            "an identical file isn't adopted, it's ours"
         );
+        moved.commit();
+        assert_eq!(read(&new.join("same")), b"ours");
+        assert_eq!(read(&new.join("diff")), b"THEM");
+        assert!(!old.join("same").exists(), "same bytes: source removed");
+        assert_eq!(read(&old.join("diff")), b"ours", "other bytes: source kept");
     }
 
     #[test]

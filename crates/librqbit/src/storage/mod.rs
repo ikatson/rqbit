@@ -58,9 +58,9 @@ pub enum MoveStorageMode {
     /// kept aside until every file has moved, so a failed move puts it back.
     Overwrite,
     /// Leave a file that already exists at the destination as it is and use it from now
-    /// on. The source file is removed only if the destination file has the same length;
-    /// otherwise it stays where it was. Because the adopted file may hold different data,
-    /// a torrent that adopted any file is rechecked after the move.
+    /// on. The source file is removed only if the destination file holds exactly the same
+    /// bytes; otherwise it stays where it was. Because an adopted file that differs may hold
+    /// other data, a torrent that adopted such a file is rechecked after the move.
     KeepExisting,
 }
 
@@ -81,8 +81,9 @@ pub struct MoveStorageRequest<'a> {
 /// What [`TorrentStorage::move_storage`] did.
 #[derive(Debug, Default)]
 pub struct MoveStorageOutcome {
-    /// Files that were already at the destination and were kept instead of the torrent's
-    /// own (only with [`MoveStorageMode::KeepExisting`]). Their content is unverified.
+    /// Files that were already at the destination, differ from the torrent's own (or the
+    /// torrent had none) and were kept instead of it (only with
+    /// [`MoveStorageMode::KeepExisting`]). Their content is unverified.
     pub adopted_files: Vec<usize>,
 }
 
@@ -254,12 +255,24 @@ pub trait TorrentStorage: Send + Sync {
     /// while this runs. Must be all or nothing: on error, what was moved is moved back and
     /// the storage keeps working at the old folder.
     ///
+    /// A successful move is pending until [`Self::finish_move_storage`]: what it replaced
+    /// or left behind (files set aside, sources of adopted files, emptied directories) stays
+    /// until then, so that the move can still be undone.
+    ///
     /// Used by [`crate::Session::move_storage`], which explains the semantics of
     /// [`MoveStorageMode`].
     fn move_storage(
         &self,
         _request: &MoveStorageRequest<'_>,
     ) -> anyhow::Result<MoveStorageOutcome> {
+        unsupported("moving storage")
+    }
+
+    /// Ends the move that the last successful [`Self::move_storage`] left pending. With
+    /// `commit`, removes what it left behind; otherwise moves every file back and uses the
+    /// old folder again (an error then says which files couldn't be put back). Called exactly
+    /// once after each successful `move_storage`, before any other I/O.
+    fn finish_move_storage(&self, _commit: bool) -> anyhow::Result<()> {
         unsupported("moving storage")
     }
 }
@@ -320,6 +333,10 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn move_storage(&self, request: &MoveStorageRequest<'_>) -> anyhow::Result<MoveStorageOutcome> {
         (**self).move_storage(request)
+    }
+
+    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
+        (**self).finish_move_storage(commit)
     }
 }
 

@@ -152,6 +152,10 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
     fn move_storage(&self, request: &MoveStorageRequest<'_>) -> anyhow::Result<MoveStorageOutcome> {
         self.underlying.move_storage(request)
     }
+
+    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
+        self.underlying.finish_move_storage(commit)
+    }
 }
 
 #[cfg(test)]

@@ -439,6 +439,10 @@ impl TorrentStorage for Instrumented {
         self.ctl.move_gate.pass();
         self.inner.move_storage(request)
     }
+
+    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
+        self.inner.finish_move_storage(commit)
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1276,12 +1280,17 @@ async fn test_move_storage_modes_with_existing_destination() -> anyhow::Result<(
                     let len = std::fs::metadata(new.join("a.bin"))?.len();
                     if same_len {
                         assert_eq!(std::fs::read(new.join("a.bin"))?, existing, "{what}");
-                        assert!(!old.join("a.bin").exists(), "{what}: source kept");
                     } else {
                         // The check gave the adopted file the torrent's length.
                         assert_eq!(len, a.data.len() as u64, "{what}");
-                        assert_eq!(std::fs::read(old.join("a.bin"))?, a.data, "{what}");
                     }
+                    // The destination holds other bytes than the source: only the same
+                    // bytes make the source redundant, so it stays.
+                    assert_eq!(
+                        std::fs::read(old.join("a.bin"))?,
+                        a.data,
+                        "{what}: source kept"
+                    );
                     // The adopted file was rechecked: its pieces are missing, the others
                     // moved and are still had.
                     let lost = content.pieces_of(&["a.bin"]);

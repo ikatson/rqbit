@@ -29,15 +29,16 @@ use crate::{
     session_stats::SessionStats,
     spawn_utils::BlockingSpawner,
     storage::{
-        BoxStorageFactory, MoveStorageMode, MoveStorageRequest, StorageFactoryExt, TorrentStorage,
-        filesystem::FilesystemStorageFactory,
+        BoxStorageFactory, MoveStorageMode, MoveStorageOutcome, MoveStorageRequest,
+        StorageFactoryExt, TorrentStorage, filesystem::FilesystemStorageFactory,
     },
     stream_connect::{
         ConnectionKind, ConnectionOptions, SocksProxyConfig, StreamConnector, StreamConnectorArgs,
     },
     torrent_state::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
-        StorageLocation, TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
+        MoveInProgress, Quiesced, StorageLoan, StorageLocation, TorrentMetadata, TorrentStateLive,
+        initializing::TorrentStateInitializing,
     },
     type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, PeerStream},
 };
@@ -905,9 +906,24 @@ impl Session {
                                 Some(st) => {
                                     let (id, st) = st?;
                                     let span = add_torrent_span(st.info_hash());
+                                    // A move the process didn't live to finish is undone
+                                    // before the torrent opens its files.
+                                    let undone = st.interrupted_move().map(|pairs| {
+                                        session.spawner.block_in_place(|| {
+                                            crate::storage::filesystem::relocate::undo_interrupted_move(&pairs)
+                                        })
+                                    });
                                     let (add_torrent, mut opts) = st.into_add_torrent()?;
                                     opts.preferred_id = Some(id);
                                     let fut = session.add_torrent(add_torrent, Some(opts));
+                                    let s = &session;
+                                    let fut = async move {
+                                        let added = fut.await?;
+                                        if let (Some(undone), AddTorrentResponse::Added(_, handle)) = (undone, &added) {
+                                            s.after_interrupted_move(handle, undone).await;
+                                        }
+                                        Ok::<_, anyhow::Error>(added)
+                                    };
                                     let fut = fut.instrument(span);
                                     futs.push(fut);
                                 },
@@ -1092,15 +1108,29 @@ impl Session {
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        for torrent in torrents {
+        for torrent in &torrents {
             if let Err(e) = torrent.pause() {
                 debug!("error pausing torrent: {e:#}");
             }
         }
         self.cancellation_token.cancel();
+
+        // A storage operation (move, rename, recheck) gives up when the session stops and
+        // undoes its work; wait for that, so that the files are where the store says they are.
+        let ops_done = futures::future::join_all(torrents.iter().map(|t| t.storage_op.lock()));
+        if tokio::time::timeout(Self::STOP_STORAGE_OPS_TIMEOUT, ops_done)
+            .await
+            .is_err()
+        {
+            warn!("storage operations are still running, stopping anyway");
+        }
+
         // this sucks, but hopefully will be enough
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+
+    /// How long [`Session::stop`] waits for running storage operations to give up.
+    const STOP_STORAGE_OPS_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// Run a callback given the currently managed torrents.
     pub fn with_torrents<R>(
@@ -1405,6 +1435,7 @@ impl Session {
                         &opts.renamed_files,
                     )
                     .context("invalid renamed_files")?,
+                    move_in_progress: None,
                 }),
             });
 
@@ -1494,70 +1525,85 @@ impl Session {
             .remove(&id)
             .with_context(|| format!("torrent with id {id} did not exist"))?;
 
-        // A storage operation in progress (move, rename, recheck) gives up and undoes its
-        // work; wait for that, so that the files are where the torrent says they are.
-        removed.storage_op_cancel.cancel();
-        let _storage_op = removed.storage_op.lock().await;
+        // The rest runs in a task of its own: once the torrent is out of the session, it must
+        // also be stopped and forgotten by the store even if the caller stops waiting.
+        let persistence = self.persistence.clone();
+        let session_output_folder = self.output_folder.clone();
+        let span = removed.shared.span.clone();
+        tokio::spawn(
+            async move {
+                // A storage operation in progress (move, rename, recheck) gives up and undoes
+                // its work; wait for that, so that the files are where the torrent says they
+                // are.
+                removed.storage_op_cancel.cancel();
+                let _storage_op = removed.storage_op.lock().await;
 
-        if let Err(e) = removed.pause() {
-            debug!("error pausing torrent before deletion: {e:#}")
-        }
-
-        let metadata = removed.metadata.load_full().expect("TODO");
-
-        let storage = removed
-            .with_state_mut(|s| match s.take() {
-                ManagedTorrentState::Initializing(p) => p.files.take().ok(),
-                ManagedTorrentState::Paused(p) => Some(p.files),
-                ManagedTorrentState::Live(l) => l
-                    .pause()
-                    // inspect_err not available in 1.75
-                    .map_err(|e| {
-                        warn!(?id, "error pausing torrent: {e:#}");
-                        e
-                    })
-                    .ok()
-                    .map(|p| p.files),
-                _ => None,
-            })
-            .map(Ok)
-            .unwrap_or_else(|| {
-                removed
-                    .shared
-                    .storage_factory
-                    .create(removed.shared(), &metadata)
-            });
-
-        if let Some(p) = self.persistence.as_ref() {
-            if let Err(e) = p.delete(id).await {
-                error!(
-                    ?id,
-                    "error deleting torrent from persistence database: {e:#}"
-                );
-            } else {
-                debug!(?id, "deleted torrent from persistence database")
-            }
-        }
-
-        match (storage, delete_files) {
-            (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),
-            (Ok(storage), true) => {
-                debug!("will delete files");
-                remove_files_and_dirs(removed.shared(), &metadata, &storage);
-                let output_folder = removed.output_folder();
-                if output_folder != self.output_folder
-                    && let Err(e) = storage.remove_directory_if_empty(Path::new(""))
-                {
-                    warn!(?id, "error removing {output_folder:?}: {e:#}")
+                if let Err(e) = removed.pause() {
+                    debug!("error pausing torrent before deletion: {e:#}")
                 }
-            }
-            (_, false) => {
-                debug!("not deleting files")
-            }
-        };
 
-        info!(id, "deleted torrent");
-        Ok(())
+                let metadata = removed.metadata.load_full().expect("TODO");
+
+                let storage = removed
+                    .with_state_mut(|s| match s.take() {
+                        ManagedTorrentState::Initializing(p) => p.files.take().ok(),
+                        ManagedTorrentState::Paused(p) => Some(p.files),
+                        ManagedTorrentState::Live(l) => l
+                            .pause()
+                            // inspect_err not available in 1.75
+                            .map_err(|e| {
+                                warn!(?id, "error pausing torrent: {e:#}");
+                                e
+                            })
+                            .ok()
+                            .map(|p| p.files),
+                        _ => None,
+                    })
+                    .map(Ok)
+                    .unwrap_or_else(|| {
+                        removed
+                            .shared
+                            .storage_factory
+                            .create(removed.shared(), &metadata)
+                    });
+
+                if let Some(p) = persistence.as_ref() {
+                    if let Err(e) = p.delete(id).await {
+                        error!(
+                            ?id,
+                            "error deleting torrent from persistence database: {e:#}"
+                        );
+                    } else {
+                        debug!(?id, "deleted torrent from persistence database")
+                    }
+                }
+
+                match (storage, delete_files) {
+                    (Err(e), true) => {
+                        return Err(e).context("torrent deleted, but could not delete files");
+                    }
+                    (Ok(storage), true) => {
+                        debug!("will delete files");
+                        remove_files_and_dirs(removed.shared(), &metadata, &storage);
+                        let output_folder = removed.output_folder();
+                        if output_folder != session_output_folder
+                            && let Err(e) = storage.remove_directory_if_empty(Path::new(""))
+                        {
+                            warn!(?id, "error removing {output_folder:?}: {e:#}")
+                        }
+                    }
+                    (_, false) => {
+                        debug!("not deleting files")
+                    }
+                };
+
+                info!(id, "deleted torrent");
+                Ok(())
+            }
+            .instrument(span),
+        )
+        .await
+        .context("the task deleting the torrent failed")?
     }
 
     pub fn make_peer_rx_managed_torrent(
@@ -1646,10 +1692,44 @@ impl Session {
     }
 
     async fn try_update_persistence_metadata(&self, handle: &ManagedTorrentHandle) {
-        if let Some(p) = self.persistence.as_ref()
-            && let Err(e) = p.update_metadata(handle.id(), handle).await
-        {
-            warn!(storage=?p, error=?e, "error updating metadata")
+        if let Err(e) = self.update_persistence_metadata(handle).await {
+            warn!(error=?e, "error updating metadata")
+        }
+    }
+
+    async fn update_persistence_metadata(
+        &self,
+        handle: &ManagedTorrentHandle,
+    ) -> anyhow::Result<()> {
+        match self.persistence.as_ref() {
+            Some(p) => p
+                .update_metadata(handle.id(), handle)
+                .await
+                .with_context(|| format!("error updating metadata in {p:?}")),
+            None => Ok(()),
+        }
+    }
+
+    // Ends the recovery of a move that a crash interrupted, once its torrent is added again:
+    // the store forgets the move. Files the undo couldn't put back are missing from where
+    // the torrent looks for them, so it is rechecked instead of trusting its bitfield.
+    async fn after_interrupted_move(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        undone: Result<(), String>,
+    ) {
+        self.try_update_persistence_metadata(handle).await;
+        match undone {
+            Ok(()) => info!(id = handle.id(), "undid an interrupted move of the files"),
+            Err(left) => {
+                error!(
+                    id = handle.id(),
+                    "couldn't fully undo an interrupted move of the files, rechecking: {left}"
+                );
+                if let Err(e) = self.force_recheck(handle).await {
+                    warn!(id = handle.id(), "error rechecking: {e:#}");
+                }
+            }
         }
     }
 
@@ -1706,10 +1786,52 @@ impl Session {
         self: &Arc<Self>,
         handle: &ManagedTorrentHandle,
     ) -> anyhow::Result<()> {
+        self.run_storage_op(
+            handle,
+            |s, h| async move { s.force_recheck_in_task(&h).await },
+        )
+        .await
+    }
+
+    // Runs a storage operation in a task of its own, so that it runs to its end (or undoes
+    // itself) even if the caller stops waiting for it: dropped half-way, an operation would
+    // leave the torrent stopped, or without its storage, or its files moved but not
+    // recorded.
+    async fn run_storage_op<R, Fut>(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        op: impl FnOnce(Arc<Self>, ManagedTorrentHandle) -> Fut,
+    ) -> anyhow::Result<R>
+    where
+        Fut: Future<Output = anyhow::Result<R>> + Send + 'static,
+        R: Send + 'static,
+    {
+        let span = handle.shared.span.clone();
+        tokio::spawn(op(self.clone(), handle.clone()).instrument(span))
+            .await
+            .context("the storage operation's task failed")?
+    }
+
+    // The body of `force_recheck`, see `run_storage_op`.
+    async fn force_recheck_in_task(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+    ) -> anyhow::Result<()> {
         let _storage_op = handle.lock_storage_op().await?;
         handle.quiesce().await?;
-        handle.begin_recheck()?;
+        self.begin_recheck(handle).await?;
         self.resume_after_storage_op(handle, true)
+    }
+
+    // Puts a quiesced torrent into a recheck (see `ManagedTorrent::begin_recheck`) and
+    // forgets its stored bitfield right away, rather than once the check gets its turn to
+    // run: a crash meanwhile must not leave a bitfield vouching for unverified data.
+    async fn begin_recheck(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        handle.begin_recheck()?;
+        if let Err(e) = self.bitv_factory.clear(handle.id().into()).await {
+            warn!(id = handle.id(), "error clearing the bitfield: {e:#}");
+        }
+        Ok(())
     }
 
     /// Moves the files of the torrent under `new_output_folder`, keeping their paths
@@ -1731,6 +1853,19 @@ impl Session {
     ///
     /// The storage must support it ([`crate::storage::TorrentStorage::move_storage`]).
     pub async fn move_storage(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        new_output_folder: PathBuf,
+        mode: MoveStorageMode,
+    ) -> anyhow::Result<()> {
+        self.run_storage_op(handle, move |s, h| async move {
+            s.move_storage_in_task(&h, new_output_folder, mode).await
+        })
+        .await
+    }
+
+    // The body of `move_storage`, see `run_storage_op`.
+    async fn move_storage_in_task(
         self: &Arc<Self>,
         handle: &ManagedTorrentHandle,
         new_output_folder: PathBuf,
@@ -1759,38 +1894,133 @@ impl Session {
                 }
             })
             .collect::<Vec<_>>();
-        let cancel = handle.storage_op_cancel.clone();
 
         let quiesced = handle.quiesce().await?;
-        let outcome = handle
-            .with_quiesced_storage(|storage| {
-                storage.move_storage(&MoveStorageRequest {
-                    new_output_folder: &new_output_folder,
-                    files: &files,
-                    mode,
-                    cancel: &cancel,
-                })
-            })
+        let loan = match handle.borrow_storage() {
+            Ok(loan) => loan,
+            Err(e) => return Err(self.restart_after_failed_op(handle, quiesced, e)),
+        };
+        let moved = self
+            .move_borrowed_storage(handle, &loan, &new_output_folder, &files, mode)
             .await;
-        let outcome = match outcome {
+        handle.give_back_storage(loan);
+        let outcome = match moved {
+            Ok(outcome) => outcome,
+            Err(e) => return Err(self.restart_after_failed_op(handle, quiesced, e)),
+        };
+
+        if !outcome.adopted_files.is_empty() && !handle.is_errored() {
+            debug!(adopted = ?outcome.adopted_files, "files adopted at the destination, rechecking");
+            if let Err(e) = self.begin_recheck(handle).await {
+                return Err(self.restart_after_failed_op(handle, quiesced, e));
+            }
+            return self.resume_after_storage_op(handle, true);
+        }
+        self.resume_after_storage_op(handle, quiesced.needs_restart())
+    }
+
+    // Restarts a torrent after a storage operation failed with `error`, adding to the error
+    // if the restart fails too.
+    fn restart_after_failed_op(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        quiesced: Quiesced,
+        error: anyhow::Error,
+    ) -> anyhow::Error {
+        match self.resume_after_storage_op(handle, quiesced.needs_restart()) {
+            Ok(()) => error,
+            Err(re) => error.context(format!("and restarting the torrent failed: {re:#}")),
+        }
+    }
+
+    // The part of `move_storage` that works on the borrowed storage, keeping the session
+    // store in step so that a crash at any point leaves the files where the store says
+    // they are, or a move that the next start undoes:
+    // 1. the store learns which files may move and where to, before the first one does;
+    // 2. the storage moves them, keeping what it replaced or left behind;
+    // 3. the store learns the new folder (if it can't, the move is undone);
+    // 4. the storage removes what it kept.
+    async fn move_borrowed_storage(
+        &self,
+        handle: &ManagedTorrentHandle,
+        loan: &StorageLoan,
+        new_output_folder: &Path,
+        files: &[Option<PathBuf>],
+        mode: MoveStorageMode,
+    ) -> anyhow::Result<MoveStorageOutcome> {
+        let old_folder = handle.output_folder();
+        // Only files that exist can be put back. Listing one that doesn't would make the
+        // undo take whatever has its name at the destination.
+        let existing = handle.shared.spawner.block_in_place(|| {
+            files
+                .iter()
+                .flatten()
+                .filter(|rel| std::fs::symlink_metadata(old_folder.join(rel)).is_ok())
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        handle.shared.location.write().move_in_progress = Some(MoveInProgress {
+            to: new_output_folder.to_owned(),
+            files: existing,
+        });
+        let cancel = handle.storage_op_cancel.clone();
+        let moved = match self
+            .update_persistence_metadata(handle)
+            .await
+            .context("error recording the move in the session store")
+        {
+            Ok(()) => {
+                handle
+                    .run_on_storage(loan, |storage| {
+                        storage.move_storage(&MoveStorageRequest {
+                            new_output_folder,
+                            files,
+                            mode,
+                            cancel: &cancel,
+                        })
+                    })
+                    .await
+            }
+            Err(e) => Err(e),
+        };
+        let outcome = match moved {
             Ok(outcome) => outcome,
             Err(e) => {
-                if let Err(re) = self.resume_after_storage_op(handle, quiesced.needs_restart()) {
-                    return Err(e.context(format!("and restarting the torrent failed: {re:#}")));
-                }
+                handle.shared.location.write().move_in_progress = None;
+                self.try_update_persistence_metadata(handle).await;
                 return Err(e);
             }
         };
 
-        handle.shared.location.write().output_folder = new_output_folder;
-        self.try_update_persistence_metadata(handle).await;
-
-        if !outcome.adopted_files.is_empty() && !handle.is_errored() {
-            debug!(adopted = ?outcome.adopted_files, "files adopted at the destination, rechecking");
-            handle.begin_recheck()?;
-            return self.resume_after_storage_op(handle, true);
+        {
+            let mut location = handle.shared.location.write();
+            location.move_in_progress = None;
+            location.output_folder = new_output_folder.to_owned();
         }
-        self.resume_after_storage_op(handle, quiesced.needs_restart())
+        if let Err(e) = self.update_persistence_metadata(handle).await {
+            // The store still says the old folder, so that's where the files must be.
+            handle.shared.location.write().output_folder = old_folder;
+            let e = e.context("error recording the new output folder in the session store");
+            let undone = handle
+                .run_on_storage(loan, |storage| storage.finish_move_storage(false))
+                .await;
+            self.try_update_persistence_metadata(handle).await;
+            return Err(match undone {
+                Ok(()) => e,
+                Err(ue) => e.context(format!("and undoing the move failed: {ue:#}")),
+            });
+        }
+        // The move is final whatever happens here: what's left behind is only clutter.
+        if let Err(e) = handle
+            .run_on_storage(loan, |storage| storage.finish_move_storage(true))
+            .await
+        {
+            warn!(
+                id = handle.id(),
+                "moved the files, but cleaning up after the move failed: {e:#}"
+            );
+        }
+        Ok(outcome)
     }
 
     /// Gives file `file_index` of the torrent another path, relative to the output folder,
@@ -1813,6 +2043,20 @@ impl Session {
         file_index: usize,
         new_relative_path: PathBuf,
     ) -> anyhow::Result<()> {
+        self.run_storage_op(handle, move |s, h| async move {
+            s.rename_file_in_task(&h, file_index, new_relative_path)
+                .await
+        })
+        .await
+    }
+
+    // The body of `rename_file`, see `run_storage_op`.
+    async fn rename_file_in_task(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        file_index: usize,
+        new_relative_path: PathBuf,
+    ) -> anyhow::Result<()> {
         let metadata = handle
             .metadata
             .load_full()
@@ -1830,23 +2074,58 @@ impl Session {
         }
 
         let quiesced = handle.quiesce().await?;
-        let result = handle
-            .with_quiesced_storage(|storage| {
-                storage.rename_file(file_index, &from, &new_relative_path)
-            })
+        let loan = match handle.borrow_storage() {
+            Ok(loan) => loan,
+            Err(e) => return Err(self.restart_after_failed_op(handle, quiesced, e)),
+        };
+        let result = self
+            .rename_borrowed_storage(
+                handle,
+                &loan,
+                file_index,
+                &from,
+                &new_relative_path,
+                renamed,
+            )
             .await;
-        if result.is_ok() {
-            handle.shared.location.write().renamed_files = renamed;
-            self.try_update_persistence_metadata(handle).await;
+        handle.give_back_storage(loan);
+        match result {
+            Ok(()) => self.resume_after_storage_op(handle, quiesced.needs_restart()),
+            Err(e) => Err(self.restart_after_failed_op(handle, quiesced, e)),
         }
-        let resumed = self.resume_after_storage_op(handle, quiesced.needs_restart());
-        match (result, resumed) {
-            (Err(e), Err(re)) => {
-                Err(e.context(format!("and restarting the torrent failed: {re:#}")))
-            }
-            (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
-            (Ok(()), Ok(())) => Ok(()),
+    }
+
+    // The part of `rename_file` that works on the borrowed storage. The file is renamed
+    // first and the store learns the new path afterwards; if it can't, the file gets its
+    // old name back, so that the store and the disk agree.
+    async fn rename_borrowed_storage(
+        &self,
+        handle: &ManagedTorrentHandle,
+        loan: &StorageLoan,
+        file_index: usize,
+        from: &Path,
+        to: &Path,
+        renamed: BTreeMap<usize, PathBuf>,
+    ) -> anyhow::Result<()> {
+        handle
+            .run_on_storage(loan, |storage| storage.rename_file(file_index, from, to))
+            .await?;
+        let previous =
+            std::mem::replace(&mut handle.shared.location.write().renamed_files, renamed);
+        if let Err(e) = self.update_persistence_metadata(handle).await {
+            handle.shared.location.write().renamed_files = previous;
+            let e = e.context("error recording the new path in the session store");
+            let undone = handle
+                .run_on_storage(loan, |storage| storage.rename_file(file_index, to, from))
+                .await;
+            return Err(match undone {
+                Ok(()) => e,
+                Err(ue) => e.context(format!(
+                    "and renaming {to:?} back to {from:?} failed: {ue:#}"
+                )),
+            });
         }
+        Ok(())
     }
 
     pub async fn update_only_files(

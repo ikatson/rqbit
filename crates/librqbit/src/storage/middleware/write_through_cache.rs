@@ -167,6 +167,10 @@ impl<U: TorrentStorage> TorrentStorage for WriteThroughCacheStorage<U> {
         }
         Ok(outcome)
     }
+
+    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
+        self.underlying.finish_move_storage(commit)
+    }
 }
 
 #[cfg(test)]

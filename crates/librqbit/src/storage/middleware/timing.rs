@@ -152,6 +152,15 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
             storage
         )
     }
+
+    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
+        let storage = &self.name;
+        timeit!(
+            "finish_move_storage",
+            self.underlying.finish_move_storage(commit),
+            storage
+        )
+    }
 }
 
 #[cfg(test)]

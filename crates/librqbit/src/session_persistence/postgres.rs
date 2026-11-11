@@ -28,6 +28,8 @@ struct TorrentsTableRecord {
     is_paused: bool,
     // Session::rename_file, as a JSON object (file index -> relative path). NULL if none.
     renamed_files: Option<String>,
+    // A Session::move_storage the process stopped in the middle of, as JSON. NULL if none.
+    move_in_progress: Option<String>,
 }
 
 impl TorrentsTableRecord {
@@ -42,6 +44,16 @@ impl TorrentsTableRecord {
                 }
             },
         };
+        let move_in_progress = self.move_in_progress.as_deref().and_then(|s| {
+            serde_json::from_str(s)
+                .inspect_err(|e| {
+                    warn!(
+                        id = self.id,
+                        "ignoring broken move_in_progress {s:?}: {e:#}"
+                    )
+                })
+                .ok()
+        });
         Some((
             self.id as TorrentId,
             SerializedTorrent {
@@ -54,6 +66,7 @@ impl TorrentsTableRecord {
                     .map(|v| v.into_iter().map(|v| v as usize).collect()),
                 is_paused: self.is_paused,
                 renamed_files,
+                move_in_progress,
             },
         ))
     }
@@ -68,6 +81,15 @@ fn renamed_files_column(torrent: &ManagedTorrentHandle) -> anyhow::Result<Option
     serde_json::to_string(&renamed)
         .map(Some)
         .context("error serializing renamed_files")
+}
+
+// The move_in_progress column of a torrent: NULL when no move is underway.
+fn move_in_progress_column(torrent: &ManagedTorrentHandle) -> anyhow::Result<Option<String>> {
+    torrent
+        .shared()
+        .move_in_progress()
+        .map(|m| serde_json::to_string(&m).context("error serializing move_in_progress"))
+        .transpose()
 }
 
 impl PostgresSessionStorage {
@@ -105,6 +127,7 @@ impl PostgresSessionStorage {
 
         exec!("ALTER TABLE torrents ADD COLUMN IF NOT EXISTS have_bitfield BYTEA");
         exec!("ALTER TABLE torrents ADD COLUMN IF NOT EXISTS renamed_files TEXT");
+        exec!("ALTER TABLE torrents ADD COLUMN IF NOT EXISTS move_in_progress TEXT");
 
         Ok(Self { pool })
     }
@@ -127,8 +150,8 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             .as_ref()
             .map(|i| i.torrent_bytes.clone())
             .unwrap_or_default();
-        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused, renamed_files)
-        VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused, renamed_files, move_in_progress)
+        VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT(id) DO NOTHING";
         sqlx::query(q)
             .bind::<i32>(id.try_into()?)
@@ -156,6 +179,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             }))
             .bind(torrent.is_paused())
             .bind(renamed_files_column(torrent)?)
+            .bind(move_in_progress_column(torrent)?)
             .execute(&self.pool)
             .await
             .context("error executing INSERT INTO torrents")?;
@@ -190,7 +214,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
         // The output folder changes with Session::move_storage, the file paths with
         // Session::rename_file.
         sqlx::query(
-            "UPDATE torrents SET only_files = $1, is_paused = $2, output_folder = $3, renamed_files = $4 WHERE id = $5",
+            "UPDATE torrents SET only_files = $1, is_paused = $2, output_folder = $3, renamed_files = $4, move_in_progress = $5 WHERE id = $6",
         )
         .bind(torrent.only_files().map(|v| {
             v.into_iter()
@@ -206,6 +230,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
                 .to_owned(),
         )
         .bind(renamed_files_column(torrent)?)
+        .bind(move_in_progress_column(torrent)?)
         .bind::<i32>(id.try_into()?)
         .execute(&self.pool)
         .await

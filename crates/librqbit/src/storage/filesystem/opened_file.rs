@@ -244,8 +244,9 @@ impl OpenedFile {
     }
 
     /// Points this file at `path` and, if `open`, opens it there for reading and writing,
-    /// creating it if it's missing like [`FilesystemStorage::init`](super::FilesystemStorage)
-    /// does.
+    /// creating it (and its directory) if it's missing like
+    /// [`FilesystemStorage::init`](super::FilesystemStorage) does. The file points at `path`
+    /// even if opening it fails.
     pub fn reopen(&self, path: PathBuf, open: bool) -> anyhow::Result<()> {
         let mut g = self.file.write();
         g.fd = None;
@@ -253,10 +254,10 @@ impl OpenedFile {
         {
             g.tried_marking_sparse = false;
         }
-        if open {
-            g.fd = Some(open_read_write(&path)?);
-        }
         g.path = path;
+        if open {
+            g.fd = Some(open_read_write(&g.path)?);
+        }
         Ok(())
     }
 
@@ -294,7 +295,15 @@ impl OpenedFile {
     }
 }
 
+// Like `FilesystemStorage::init`, creates what's missing: the user may have deleted the file
+// or its directory while the torrent was loaded.
 fn open_read_write(path: &Path) -> anyhow::Result<File> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("error creating directory {parent:?}"))?;
+    }
     std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)

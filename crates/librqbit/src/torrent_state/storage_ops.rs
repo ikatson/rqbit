@@ -49,6 +49,14 @@ enum Borrowed {
     Error,
 }
 
+/// The storage of a quiesced torrent, taken out of its state for an operation. See
+/// [`ManagedTorrent::borrow_storage`].
+pub(crate) struct StorageLoan {
+    storage: FileStorage,
+    borrowed: Borrowed,
+    metadata: Arc<TorrentMetadata>,
+}
+
 impl ManagedTorrent {
     /// Waits for the other storage operations on this torrent to finish. Fails if the
     /// torrent was deleted or the session stopped meanwhile.
@@ -91,11 +99,16 @@ impl ManagedTorrent {
                         q.was_live = true;
                         return Ok(q);
                     }
-                    // The check notices the request between two pieces, then wakes us up
-                    // (see `ManagedTorrent::start`).
+                    // The check notices the request between two pieces (or while it waits
+                    // for its turn), then wakes us up (see `ManagedTorrent::start`).
                     ManagedTorrentState::Initializing(init) if init.is_check_running() => {
-                        init.request_pause();
-                        q.interrupted_check = true;
+                        if !q.interrupted_check {
+                            init.request_pause();
+                            // A check waiting for its turn learns of the request this way.
+                            // It also wakes up this loop once, which then just waits again.
+                            self.state_change_notify.notify_waiters();
+                            q.interrupted_check = true;
+                        }
                     }
                     ManagedTorrentState::Initializing(_)
                     | ManagedTorrentState::Paused(_)
@@ -112,13 +125,11 @@ impl ManagedTorrent {
         }
     }
 
-    /// Runs `f` on the torrent's storage in a blocking thread, without holding the state
-    /// lock. The torrent must be quiesced. In error state there's no storage: one is created
-    /// for `f` (like resuming from error would) and dropped afterwards.
-    pub(crate) async fn with_quiesced_storage<R: Send>(
-        &self,
-        f: impl FnOnce(&dyn TorrentStorage) -> anyhow::Result<R> + Send,
-    ) -> anyhow::Result<R> {
+    /// Takes the storage out of the state of a quiesced torrent, for the calls of
+    /// [`Self::run_on_storage`] that an operation makes; [`Self::give_back_storage`]
+    /// puts it back. In error state there's no storage: one is created for the operation
+    /// (like resuming from error would) and dropped when given back.
+    pub(crate) fn borrow_storage(&self) -> anyhow::Result<StorageLoan> {
         let metadata = self
             .metadata
             .load_full()
@@ -135,7 +146,7 @@ impl ManagedTorrent {
                 ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
             }
         };
-        let (storage, borrowed): (FileStorage, Borrowed) = match taken {
+        let (storage, borrowed) = match taken {
             Some(taken) => taken,
             None => {
                 let storage = self.shared.spawner.block_in_place(|| {
@@ -146,13 +157,32 @@ impl ManagedTorrent {
                 (storage, Borrowed::Error)
             }
         };
+        Ok(StorageLoan {
+            storage,
+            borrowed,
+            metadata,
+        })
+    }
 
-        let result = self
-            .shared
+    /// Runs `f` on borrowed storage in a blocking thread.
+    pub(crate) async fn run_on_storage<R: Send>(
+        &self,
+        loan: &StorageLoan,
+        f: impl FnOnce(&dyn TorrentStorage) -> anyhow::Result<R> + Send,
+    ) -> anyhow::Result<R> {
+        self.shared
             .spawner
-            .block_in_place_with_semaphore(|| f(&*storage))
-            .await;
+            .block_in_place_with_semaphore(|| f(&*loan.storage))
+            .await
+    }
 
+    /// Puts storage taken by [`Self::borrow_storage`] back into the state.
+    pub(crate) fn give_back_storage(&self, loan: StorageLoan) {
+        let StorageLoan {
+            storage,
+            borrowed,
+            metadata,
+        } = loan;
         // Pause, unpause and delete wait for the operation, and nothing else replaces a
         // paused or idle initializing state, so the state is still the one borrowed from.
         let mut g = self.locked.write();
@@ -170,7 +200,8 @@ impl ManagedTorrent {
                         init.previously_errored(),
                     )
                     .with_skip_check(init.skip_check())
-                    .with_carried_stats(init.carried_stats()),
+                    .with_carried_stats(init.carried_stats())
+                    .with_streams(init.streams()),
                 );
             }
             (_, Borrowed::Error) => {}
@@ -180,7 +211,6 @@ impl ManagedTorrent {
                 "the torrent changed state during a storage operation, dropping its storage"
             ),
         }
-        result
     }
 
     /// Replaces the state of a quiesced torrent with a check that ignores the fastresume
@@ -193,9 +223,11 @@ impl ManagedTorrent {
             .context("torrent is not resolved")?;
         let mut g = self.locked.write();
         let only_files = g.only_files.clone();
-        let (files, carried) = match &mut g.state {
-            ManagedTorrentState::Paused(p) => (p.files.take()?, p.carried_stats),
-            ManagedTorrentState::Initializing(init) => (init.files.take()?, init.carried_stats()),
+        let (files, carried, streams) = match &mut g.state {
+            ManagedTorrentState::Paused(p) => (p.files.take()?, p.carried_stats, p.streams.clone()),
+            ManagedTorrentState::Initializing(init) => {
+                (init.files.take()?, init.carried_stats(), init.streams())
+            }
             ManagedTorrentState::Error(_) => return Ok(()),
             ManagedTorrentState::Live(_) => bail!("bug: the torrent wasn't quiesced"),
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
@@ -204,7 +236,8 @@ impl ManagedTorrent {
         // everything.
         let init =
             TorrentStateInitializing::new(self.shared.clone(), metadata, only_files, files, true)
-                .with_carried_stats(carried);
+                .with_carried_stats(carried)
+                .with_streams(streams);
         g.state = ManagedTorrentState::Initializing(Arc::new(init));
         self.state_change_notify.notify_waiters();
         Ok(())
