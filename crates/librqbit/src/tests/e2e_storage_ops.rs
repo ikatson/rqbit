@@ -534,6 +534,26 @@ async fn wait_completed(handle: &ManagedTorrent) -> anyhow::Result<()> {
         .context("timed out waiting for the download")?
 }
 
+// Waits for the download to complete for as long as it gets anywhere: fails only when nothing
+// new arrived for WAIT, with the stats that say where it stalled.
+async fn wait_completed_while_progressing(handle: &ManagedTorrent) -> anyhow::Result<()> {
+    let completed = handle.wait_until_completed();
+    tokio::pin!(completed);
+    let mut last = handle.stats().progress_bytes;
+    loop {
+        tokio::select! {
+            r = &mut completed => return r,
+            _ = tokio::time::sleep(WAIT) => {
+                let stats = handle.stats();
+                if stats.progress_bytes == last {
+                    bail!("the download stalled at {last} bytes: {stats:?}");
+                }
+                last = stats.progress_bytes;
+            }
+        }
+    }
+}
+
 fn have_pieces(handle: &ManagedTorrent) -> anyhow::Result<Vec<usize>> {
     handle.with_chunk_tracker(|ct| ct.get_have_pieces().as_slice().iter_ones().collect())
 }
@@ -1197,7 +1217,10 @@ async fn test_move_storage_downloading() -> anyhow::Result<()> {
             .move_storage(&client.handle, new.clone(), MoveStorageMode::FailIfExists)
             .await?;
         assert!(is_live(&client.handle));
-        wait_completed(&client.handle).await?;
+        // The move happened mid-transfer, which is all the throttle was for: let the rest go
+        // at full speed, so a slow runner only has to get the transfer going again.
+        seed.session.ratelimits.set_upload_bps(None);
+        wait_completed_while_progressing(&client.handle).await?;
         content.assert_at(&new, &[])?;
         no_torrent_files_at(&content, &client.out())?;
         Ok(())
