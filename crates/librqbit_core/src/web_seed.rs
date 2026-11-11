@@ -38,6 +38,62 @@ pub fn push_web_seed(list: &mut Vec<String>, url: &str) -> bool {
     true
 }
 
+/// The URL of one file of a torrent on a web seed (BEP 19, the same mapping
+/// as libtorrent).
+///
+/// `base` is the web seed URL and `name` the torrent's `name`. `path` is
+/// `None` for a single-file torrent, otherwise the components of the file's
+/// path inside the torrent as published in the metainfo.
+///
+/// - Single-file torrent: `base` is the file itself, unless it ends with `/`:
+///   then the name is appended.
+/// - Multi-file torrent: `base` (with a `/` added if missing), the name, then
+///   every path component, separated by `/`.
+///
+/// Every appended component is percent-encoded byte by byte, so names that are
+/// not UTF-8 map to the bytes the torrent publishes.
+pub fn web_seed_file_url<'a>(
+    base: &str,
+    name: &[u8],
+    path: Option<impl IntoIterator<Item = &'a [u8]>>,
+) -> String {
+    let mut url = String::with_capacity(base.len() + name.len() + 16);
+    url.push_str(base);
+    match path {
+        None => {
+            if base.ends_with('/') {
+                push_percent_encoded(&mut url, name);
+            }
+        }
+        Some(path) => {
+            if !base.ends_with('/') {
+                url.push('/');
+            }
+            push_percent_encoded(&mut url, name);
+            for component in path {
+                url.push('/');
+                push_percent_encoded(&mut url, component);
+            }
+        }
+    }
+    url
+}
+
+// Appends `bytes` with everything but the unreserved characters of RFC 3986
+// percent-encoded.
+fn push_percent_encoded(out: &mut String, bytes: &[u8]) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for &b in bytes {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(b));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[usize::from(b >> 4)]));
+            out.push(char::from(HEX[usize::from(b & 0x0f)]));
+        }
+    }
+}
+
 /// Deserializes `url-list`: a single string or a list of strings. Entries that
 /// are not usable web seed URLs (not UTF-8, not http(s), not strings at all)
 /// are skipped, duplicates dropped and the count bounded by [`MAX_WEB_SEEDS`].
@@ -185,5 +241,74 @@ mod tests {
             push_web_seed(&mut list, &format!("http://h{i}/"));
         }
         assert_eq!(list.len(), MAX_WEB_SEEDS);
+    }
+
+    #[test]
+    fn test_web_seed_file_url_table() {
+        let none: Option<Vec<&[u8]>> = None;
+        let cases: Vec<(&str, &[u8], Option<Vec<&[u8]>>, &str)> = vec![
+            // Single file: the URL is the file.
+            ("http://h/f.iso", b"a.iso", none.clone(), "http://h/f.iso"),
+            // Single file, trailing slash: the name is appended.
+            ("http://h/d/", b"a.iso", none.clone(), "http://h/d/a.iso"),
+            (
+                "http://h/d/",
+                b"a b+c%.iso",
+                none.clone(),
+                "http://h/d/a%20b%2Bc%25.iso",
+            ),
+            // Multi-file: a slash is added, then name and path.
+            (
+                "http://h/d",
+                b"t",
+                Some(vec![b"f.bin".as_slice()]),
+                "http://h/d/t/f.bin",
+            ),
+            (
+                "http://h/d/",
+                b"t",
+                Some(vec![b"f.bin".as_slice()]),
+                "http://h/d/t/f.bin",
+            ),
+            // Nested paths: every component is encoded on its own.
+            (
+                "https://h:8443/",
+                b"my torrent",
+                Some(vec![
+                    b"sub dir".as_slice(),
+                    b"a/b".as_slice(),
+                    b"x~y_z-1.txt",
+                ]),
+                "https://h:8443/my%20torrent/sub%20dir/a%2Fb/x~y_z-1.txt",
+            ),
+            // Non-ASCII UTF-8 is encoded as its bytes.
+            (
+                "http://h/",
+                "种子".as_bytes(),
+                Some(vec!["文件.txt".as_bytes()]),
+                "http://h/%E7%A7%8D%E5%AD%90/%E6%96%87%E4%BB%B6.txt",
+            ),
+            // Bytes that are not UTF-8 are kept, not replaced.
+            (
+                "http://h/",
+                b"n\xff",
+                Some(vec![b"\xe9t\xe9".as_slice()]),
+                "http://h/n%FF/%E9t%E9",
+            ),
+            // Reserved characters never leak into the URL as delimiters.
+            (
+                "http://h/",
+                b"q?#&=",
+                Some(vec![b"a;b@c".as_slice()]),
+                "http://h/q%3F%23%26%3D/a%3Bb%40c",
+            ),
+        ];
+        for (base, name, path, expected) in cases {
+            assert_eq!(
+                web_seed_file_url(base, name, path.clone()),
+                expected,
+                "base={base} name={name:?} path={path:?}"
+            );
+        }
     }
 }
