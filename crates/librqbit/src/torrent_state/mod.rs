@@ -2,8 +2,11 @@ pub mod initializing;
 pub mod live;
 pub mod paused;
 pub mod stats;
+mod storage_ops;
 mod streaming;
 pub mod utils;
+
+pub(crate) use storage_ops::validate_renames;
 
 use std::collections::{BTreeMap, HashSet};
 use std::net::SocketAddr;
