@@ -381,3 +381,148 @@ impl BitVFactory for PostgresSessionStorage {
         Ok(())
     }
 }
+
+// Needs a Postgres server: runs against RQBIT_TEST_POSTGRES_URL, and is skipped (with a note)
+// when it isn't set. Works in a schema of its own, dropped when done.
+#[cfg(test)]
+mod tests {
+    use std::{path::Path, sync::Arc};
+
+    use sqlx::{AssertSqlSafe, PgPool};
+
+    use super::*;
+    use crate::{
+        CreateTorrentOptions, Session, SessionOptions, SessionPersistenceConfig, create_torrent,
+        spawn_utils::BlockingSpawner, tests::test_util::create_default_random_dir_with_torrents,
+    };
+
+    const ENV: &str = "RQBIT_TEST_POSTGRES_URL";
+
+    async fn session(out: &Path, url: &str) -> anyhow::Result<Arc<Session>> {
+        Session::new_with_opts(
+            out.to_owned(),
+            SessionOptions {
+                dht: None,
+                persistence: Some(SessionPersistenceConfig::Postgres {
+                    connection_string: url.to_owned(),
+                }),
+                listen: None,
+                disable_local_service_discovery: true,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    fn only(session: &Session) -> anyhow::Result<ManagedTorrentHandle> {
+        let mut all = session.with_torrents(|t| t.map(|(_, h)| h.clone()).collect::<Vec<_>>());
+        anyhow::ensure!(all.len() == 1, "{} torrents restored", all.len());
+        Ok(all.remove(0))
+    }
+
+    // A torrent stored by a version without the limit columns loads without limits; limits set
+    // later are stored in the new columns, and removing them stores NULL again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_limits_are_persisted() -> anyhow::Result<()> {
+        let Ok(base) = std::env::var(ENV) else {
+            eprintln!("skipping test_limits_are_persisted: set {ENV} to run the Postgres tests");
+            return Ok(());
+        };
+        // Made of a fixed name and the process id, so it is safe to splice into the statements
+        // (identifiers can't be bound as parameters).
+        let schema = format!("rqbit_test_limits_{}", std::process::id());
+        let admin = PgPool::connect(&base).await.context("connecting")?;
+        sqlx::query(AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(&admin)
+        .await?;
+        sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
+            .execute(&admin)
+            .await?;
+        // Every connection of the store resolves unqualified names in the test's schema.
+        let sep = if base.contains('?') { '&' } else { '?' };
+        let url = format!("{base}{sep}options=-c%20search_path%3D{schema}");
+
+        let result = limits_round_trip(&url).await;
+        sqlx::query(AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&admin)
+            .await?;
+        result
+    }
+
+    async fn limits_round_trip(url: &str) -> anyhow::Result<()> {
+        let data = create_default_random_dir_with_torrents(2, 4096, Some("rqbit_pg_limits"));
+        let torrent = create_torrent(
+            data.path(),
+            CreateTorrentOptions {
+                piece_length: Some(1024),
+                ..Default::default()
+            },
+            &BlockingSpawner::new(1),
+        )
+        .await?;
+
+        // The table as a version without the limit columns left it, with one paused torrent.
+        let old = PgPool::connect(url).await?;
+        for q in [
+            "CREATE SEQUENCE torrents_id AS integer",
+            "CREATE TABLE torrents (
+              id INTEGER PRIMARY KEY DEFAULT nextval('torrents_id'),
+              info_hash BYTEA NOT NULL,
+              torrent_bytes BYTEA NOT NULL,
+              trackers TEXT[] NOT NULL,
+              output_folder TEXT NOT NULL,
+              only_files INTEGER[],
+              is_paused BOOLEAN NOT NULL
+            )",
+            "ALTER TABLE torrents ADD COLUMN have_bitfield BYTEA",
+        ] {
+            sqlx::query(q).execute(&old).await?;
+        }
+        sqlx::query(
+            "INSERT INTO torrents (info_hash, torrent_bytes, trackers, output_folder, is_paused)
+            VALUES ($1, $2, $3, $4, true)",
+        )
+        .bind(&torrent.info_hash().0[..])
+        .bind(torrent.as_bytes()?.as_ref())
+        .bind(Vec::<String>::new())
+        .bind(data.path().to_str().context("utf-8")?)
+        .execute(&old)
+        .await?;
+        old.close().await;
+
+        let session = session(data.path(), url).await?;
+        let handle = only(&session)?;
+        assert_eq!(handle.ratelimits(), LimitsConfig::default());
+        assert_eq!(handle.peer_limit(), None);
+
+        let limits = LimitsConfig {
+            upload_bps: NonZeroU32::new(100 * 1024),
+            download_bps: NonZeroU32::new(200 * 1024),
+        };
+        session.set_torrent_ratelimits(&handle, limits).await?;
+        session.set_torrent_peer_limit(&handle, Some(7)).await?;
+        session.stop().await;
+        drop(handle);
+
+        let session = self::session(data.path(), url).await?;
+        let handle = only(&session)?;
+        assert_eq!(handle.ratelimits(), limits);
+        assert_eq!(handle.peer_limit(), Some(7));
+
+        session
+            .set_torrent_ratelimits(&handle, LimitsConfig::default())
+            .await?;
+        session.set_torrent_peer_limit(&handle, None).await?;
+        session.stop().await;
+        drop(handle);
+
+        let session = self::session(data.path(), url).await?;
+        let handle = only(&session)?;
+        assert_eq!(handle.ratelimits(), LimitsConfig::default());
+        assert_eq!(handle.peer_limit(), None);
+        session.stop().await;
+        Ok(())
+    }
+}
