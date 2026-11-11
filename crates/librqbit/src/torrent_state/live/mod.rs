@@ -599,7 +599,13 @@ impl TorrentStateLive {
         permit: OwnedSemaphorePermit,
     ) -> crate::Result<()> {
         let state = self;
-        let (rx, tx) = state.peers.mark_peer_connecting(addr)?;
+        let Some((rx, tx)) = state.peers.mark_peer_connecting(addr)? else {
+            debug!(
+                ?addr,
+                "peer is connected or waiting already, not dialing it"
+            );
+            return Ok(());
+        };
         let counters = state
             .peers
             .with_peer(addr, |p| p.stats.counters.clone())
