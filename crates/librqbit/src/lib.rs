@@ -114,6 +114,8 @@ pub use clone_to_owned::CloneToOwned;
 /// re-exported so that an embedder can check data on disk against a torrent's metadata.
 pub use librqbit_core::lengths::{Lengths, ValidPieceIndex};
 pub use librqbit_core::magnet::*;
+/// The format of a torrent ([`CreateTorrentOptions::version`]) and the version-independent
+/// piece verifier.
 pub use librqbit_core::metainfo_v2::{PieceVerdict, PieceVerifier, TorrentVersion};
 pub use librqbit_core::peer_id::*;
 pub use librqbit_core::torrent_metainfo::*;

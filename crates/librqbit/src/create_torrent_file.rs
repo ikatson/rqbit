@@ -994,6 +994,10 @@ pub(crate) mod tests {
 
     const P: u32 = 16 * 1024;
     const PL: usize = P as usize;
+    /// The piece length of the layout tests.
+    pub(crate) const LAYOUT_PIECE_LENGTH: u32 = P;
+    /// The lengths of the single-file layout tests.
+    pub(crate) const SINGLE_FILE_LENGTHS: [usize; 5] = [1, 5000, PL, 2 * PL, 3 * PL + 123];
     const FORMATS: [TorrentVersion; 3] = [
         TorrentVersion::V1,
         TorrentVersion::V2,
@@ -1028,10 +1032,10 @@ pub(crate) mod tests {
     ];
 
     /// A file of a test: its path in the torrent ('/'-separated) and its content.
-    type TestFile = (String, Vec<u8>);
+    pub(crate) type TestFile = (String, Vec<u8>);
 
     /// Pseudo-random bytes, different for every `seed`, so that no two pieces are alike.
-    fn data(seed: u64, len: usize) -> Vec<u8> {
+    pub(crate) fn data(seed: u64, len: usize) -> Vec<u8> {
         let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
         (0..len)
             .map(|_| {
@@ -1050,7 +1054,7 @@ pub(crate) mod tests {
             .collect()
     }
 
-    fn write_files<'a>(root: &Path, files: impl IntoIterator<Item = &'a TestFile>) {
+    pub(crate) fn write_files<'a>(root: &Path, files: impl IntoIterator<Item = &'a TestFile>) {
         for (path, content) in files {
             let full = root.join(path);
             std::fs::create_dir_all(full.parent().unwrap()).unwrap();
@@ -1167,7 +1171,7 @@ pub(crate) mod tests {
     }
 
     /// The folders of the layout tests, with their files in torrent order.
-    fn folder_cases() -> Vec<(&'static str, Vec<TestFile>)> {
+    pub(crate) fn folder_cases() -> Vec<(&'static str, Vec<TestFile>)> {
         let many: Vec<(String, usize)> = (0..150)
             .map(|i| (format!("many/{i:03}.txt"), (i * 37) % 900 + 1))
             .collect();
@@ -1223,7 +1227,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_single_file_in_every_format() {
-        for len in [1, 5000, PL, 2 * PL, 3 * PL + 123] {
+        for len in SINGLE_FILE_LENGTHS {
             let dir = tempdir();
             let path = dir.path().join("single.bin");
             let content = data(len as u64, len);

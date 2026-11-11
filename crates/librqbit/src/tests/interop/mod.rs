@@ -28,6 +28,7 @@ use tokio::{
 };
 
 mod bittorrent_v2;
+mod create_torrent;
 mod smoke;
 mod webseed;
 
