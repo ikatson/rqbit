@@ -11,6 +11,9 @@ pub struct Magnet {
     pub trackers: Vec<String>,
     pub name: Option<String>,
     select_only: Option<Vec<usize>>,
+    /// BEP 19 web seeds, the `ws` parameters: usable `http` / `https` URLs
+    /// only, deduplicated and bounded (see [`crate::web_seed`]).
+    pub web_seeds: Vec<String>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -38,6 +41,7 @@ impl Magnet {
             trackers,
             name: None,
             select_only,
+            web_seeds: Vec::new(),
         }
     }
 
@@ -56,6 +60,7 @@ impl Magnet {
             trackers,
             name: None,
             select_only,
+            web_seeds: Vec::new(),
         })
     }
 
@@ -70,6 +75,7 @@ impl Magnet {
                 name: None,
                 trackers: vec![],
                 select_only: None,
+                web_seeds: Vec::new(),
             });
         }
         let url = url::Url::parse(url).context("magnet link must be a valid URL")?;
@@ -82,6 +88,7 @@ impl Magnet {
         let mut name: Option<String> = None;
         let mut trackers = Vec::<String>::new();
         let mut files = Vec::<usize>::new();
+        let mut web_seeds = Vec::<String>::new();
         for (key, value) in url.query_pairs() {
             match key.as_ref() {
                 "xt" => {
@@ -98,6 +105,9 @@ impl Magnet {
                     }
                 }
                 "tr" => trackers.push(value.into()),
+                "ws" => {
+                    crate::web_seed::push_web_seed(&mut web_seeds, &value);
+                }
                 "dn" if !value.is_empty() => name = Some(value.into_owned()),
                 "dn" => {}
                 "so" => {
@@ -132,6 +142,7 @@ impl Magnet {
                 trackers,
                 name,
                 select_only: if files.is_empty() { None } else { Some(files) },
+                web_seeds,
             }),
             false => {
                 anyhow::bail!("did not find infohash")
@@ -166,6 +177,13 @@ impl std::fmt::Display for Magnet {
         for tracker in self.trackers.iter() {
             write_ampersand(f)?;
             write!(f, "tr={tracker}")?;
+        }
+        for ws in self.web_seeds.iter() {
+            write_ampersand(f)?;
+            write!(f, "ws=")?;
+            for part in url::form_urlencoded::byte_serialize(ws.as_bytes()) {
+                f.write_str(part)?;
+            }
         }
         if let Some(select_only) = &self.select_only
             && !select_only.is_empty()
@@ -228,5 +246,41 @@ mod tests {
             &Magnet::from_id20(id20, Default::default(), Some(vec![1, 2, 3])).to_string(),
             "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5&so=1,2,3"
         );
+    }
+
+    #[test]
+    fn test_magnet_web_seeds_round_trip() {
+        let magnet = "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5\
+            &ws=http%3A%2F%2Fa.example%2Fdir%2F\
+            &ws=https://b.example/f%20x?q=1%26r\
+            &ws=ftp%3A%2F%2Fc.example%2F\
+            &ws=http%3A%2F%2Fa.example%2Fdir%2F\
+            &ws=";
+        let m = Magnet::parse(magnet).unwrap();
+        assert_eq!(
+            m.web_seeds,
+            vec!["http://a.example/dir/", "https://b.example/f x?q=1&r"]
+        );
+
+        let formatted = m.to_string();
+        assert_eq!(
+            formatted,
+            "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5\
+            &ws=http%3A%2F%2Fa.example%2Fdir%2F\
+            &ws=https%3A%2F%2Fb.example%2Ff+x%3Fq%3D1%26r"
+        );
+        let again = Magnet::parse(&formatted).unwrap();
+        assert_eq!(again.web_seeds, m.web_seeds);
+        assert_eq!(again.as_id20(), m.as_id20());
+    }
+
+    #[test]
+    fn test_magnet_web_seeds_bounded() {
+        let mut magnet = "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5".to_owned();
+        for i in 0..crate::web_seed::MAX_WEB_SEEDS + 5 {
+            magnet.push_str(&format!("&ws=http://h{i}.example/"));
+        }
+        let m = Magnet::parse(&magnet).unwrap();
+        assert_eq!(m.web_seeds.len(), crate::web_seed::MAX_WEB_SEEDS);
     }
 }

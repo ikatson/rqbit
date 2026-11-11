@@ -119,4 +119,13 @@ impl TorrentStorage for MmapFilesystemStorage {
         self.opened_mmaps = mmaps;
         Ok(())
     }
+
+    fn file_length(&self, file_id: usize) -> anyhow::Result<Option<u64>> {
+        self.fs.file_length(file_id)
+    }
+
+    // rename_file() and move_storage() keep their "unsupported" defaults: a mapping stays
+    // attached to the file it was made from, so after a copy across devices it would go on
+    // writing into the deleted source. Supporting them means remapping every moved file,
+    // which is another unsafe map_mut() this example doesn't take on.
 }

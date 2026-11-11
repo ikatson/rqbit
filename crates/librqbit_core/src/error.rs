@@ -20,6 +20,12 @@ pub enum Error {
     BadTorrentDuplicateFilenames,
     #[error("empty filename in torrent")]
     BadTorrentEmptyFilename,
+    #[error("torrent has no \"pieces\"")]
+    BadTorrentMissingPieces,
+    #[error("torrent has too many pieces")]
+    BadTorrentTooManyPieces,
+    #[error("torrent has a piece length of 0")]
+    BadTorrentZeroPieceLength,
 
     // BEP 52 (v2) errors
     #[error("v2 torrent missing file_tree")]
@@ -54,4 +60,18 @@ pub enum Error {
     V2InvalidTorrent,
     #[error("v2 hybrid file list mismatch: {0}")]
     V2HybridFileListMismatch(String),
+    #[error("v2 file tree is nested deeper than {0} levels")]
+    V2FileTreeTooDeep(usize),
+    #[error("v2 file tree has more than {0} files")]
+    V2FileTreeTooManyFiles(usize),
+    #[error("v2 file tree has more than {0} path components in total")]
+    V2FileTreeTooManyPathComponents(usize),
+    #[error("v2 file tree node is both a file and a directory")]
+    V2FileTreeMixedNode,
+    #[error("v2 pieces root must be 32 bytes, got {0}")]
+    V2InvalidPiecesRoot(usize),
+    #[error("v2 file tree has two files with the same pieces root but different lengths")]
+    V2DuplicatePiecesRoot,
+    #[error("v2 hybrid torrent: file does not start on a piece boundary: {0}")]
+    V2HybridFileNotAligned(String),
 }

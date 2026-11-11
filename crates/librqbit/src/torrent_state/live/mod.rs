@@ -39,9 +39,11 @@
 // > so don't lock them both at the same time at all, or at the worst lock them in the
 // > same order (peers one first, then the global one).
 
+pub(crate) mod hashes;
 pub mod peer;
 pub mod peers;
 pub mod stats;
+mod web_seed;
 
 use std::{
     borrow::Cow,
@@ -50,7 +52,7 @@ use std::{
     num::NonZeroU32,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -214,6 +216,9 @@ pub struct TorrentStateLive {
         ChunkInfo,
     )>,
     ratelimits: Limits,
+
+    // BEP 52 hash requests: the answers we give, the piece layers we fetch.
+    hashes: hashes::HashState,
 }
 
 impl TorrentStateLive {
@@ -241,7 +246,7 @@ impl TorrentStateLive {
         let up_speed_estimator = SpeedEstimator::default();
 
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
-        let lengths = *paused.chunk_tracker.get_lengths();
+        let lengths = paused.chunk_tracker.get_lengths().clone();
 
         // TODO: make it configurable
         let file_priorities = {
@@ -281,11 +286,8 @@ impl TorrentStateLive {
                 unflushed_bitv_bytes: 0,
             }),
             files: paused.files,
-            stats: AtomicStats {
-                have_bytes: AtomicU64::new(have_bytes),
-                ..Default::default()
-            },
-            lengths,
+            stats: paused.carried_stats.to_atomic(have_bytes),
+            lengths: lengths.clone(),
             peer_semaphore: Arc::new(Semaphore::new(
                 paused.shared.options.peer_limit.unwrap_or(128),
             )),
@@ -303,6 +305,7 @@ impl TorrentStateLive {
                 .collect(),
             ratelimit_upload_tx,
             ratelimits,
+            hashes: hashes::HashState::new(&paused.metadata.info),
         });
 
         state.spawn(
@@ -346,6 +349,14 @@ impl TorrentStateLive {
             format!("[{}]upload_scheduler", state.shared.id),
             state.clone().task_upload_scheduler(ratelimit_upload_rx),
         );
+        crate::webseed::spawn_web_seeds(&state);
+        if state.hashes.is_fetching() {
+            state.spawn(
+                debug_span!(parent: state.shared.span.clone(), "hash_fetcher"),
+                format!("[{}]hash_fetcher", state.shared.id),
+                state.clone().task_hash_fetcher(),
+            );
+        }
         Ok(state)
     }
 
@@ -488,6 +499,7 @@ impl TorrentStateLive {
             tx,
             counters,
             first_message_received: AtomicBool::new(false),
+            hash_answers: Mutex::new(hashes::AnswerBudget::new(Instant::now())),
             cancel_token: self.cancellation_token.child_token(),
             client_name_and_version: self.shared.client_name_and_version().to_owned(),
         };
@@ -505,7 +517,8 @@ impl TorrentStateLive {
             Some(options),
             self.shared.spawner.clone(),
             self.shared.connector.clone(),
-        );
+        )
+        .with_info_hash_v2(self.shared.info_hash_v2);
         let requester = handler.task_peer_chunk_requester();
 
         let res = tokio::select! {
@@ -552,6 +565,7 @@ impl TorrentStateLive {
             tx,
             counters,
             first_message_received: AtomicBool::new(false),
+            hash_answers: Mutex::new(hashes::AnswerBudget::new(Instant::now())),
             cancel_token: state.cancellation_token.child_token(),
             client_name_and_version: state.shared.client_name_and_version().to_owned(),
         };
@@ -570,7 +584,10 @@ impl TorrentStateLive {
             Some(options),
             state.shared.spawner.clone(),
             state.shared.connector.clone(),
-        );
+        )
+        .with_info_hash_v2(state.shared.info_hash_v2)
+        // BEP 52: piece layers can only be asked for on v2 connections.
+        .with_v2_first(!state.metadata.info.has_all_piece_layers());
         let requester = aframe!(
             handler
                 .task_peer_chunk_requester()
@@ -697,10 +714,22 @@ impl TorrentStateLive {
         TimedExistence::new(timeit(reason, || self._locked.write()), reason)
     }
 
-    fn set_peer_live(&self, handle: PeerHandle, h: Handshake, connection_kind: ConnectionKind) {
+    fn set_peer_live(
+        &self,
+        handle: PeerHandle,
+        h: Handshake,
+        connection_kind: ConnectionKind,
+        v2: bool,
+    ) {
         self.peers.with_peer_mut(handle, "set_peer_live", |p| {
             p.connecting_to_live(h.peer_id, &self.peers, connection_kind);
+            if let Some(live) = p.get_live_mut() {
+                live.v2 = v2;
+            }
         });
+        if v2 {
+            self.hashes.wake_fetcher();
+        }
     }
 
     pub fn get_uploaded_bytes(&self) -> u64 {
@@ -793,7 +822,13 @@ impl TorrentStateLive {
             files: self.files.take()?,
             chunk_tracker,
             streams: self.streams.clone(),
+            carried_stats: Default::default(),
         })
+    }
+
+    // The counters so far, for the live state a storage operation restarts the torrent in.
+    pub(crate) fn carried_stats(&self) -> super::paused::CarriedStats {
+        super::paused::CarriedStats::snapshot(&self.stats)
     }
 
     fn on_fatal_error(&self, e: anyhow::Error) -> anyhow::Result<()> {
@@ -1044,6 +1079,9 @@ struct PeerHandler {
 
     cancel_token: CancellationToken,
 
+    // BEP 52: how many more hash requests of the peer we answer.
+    hash_answers: Mutex<hashes::AnswerBudget>,
+
     client_name_and_version: String,
 }
 
@@ -1121,6 +1159,12 @@ impl PeerConnectionHandler for &'_ PeerHandler {
                     self.on_pex_message(pex);
                 }
             }
+            Message::HashRequest(request) => self.on_hash_request(request)?,
+            Message::Hashes(h) => self
+                .state
+                .on_received_hashes(self.addr, &h)
+                .context("on_received_hashes")?,
+            Message::HashReject(request) => self.state.on_hash_reject(self.addr, &request),
             message => {
                 warn!(
                     id = self.state.shared.id,
@@ -1140,8 +1184,13 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         Ok(len)
     }
 
-    fn on_handshake(&self, handshake: Handshake, ckind: ConnectionKind) -> anyhow::Result<()> {
-        self.state.set_peer_live(self.addr, handshake, ckind);
+    fn on_handshake(
+        &self,
+        handshake: Handshake,
+        ckind: ConnectionKind,
+        v2: bool,
+    ) -> anyhow::Result<()> {
+        self.state.set_peer_live(self.addr, handshake, ckind, v2);
         Ok(())
     }
 
@@ -1446,7 +1495,12 @@ impl PeerHandler {
                     priority_pieces: self.state.streams.iter_next_pieces(&self.state.lengths),
                     file_priorities,
                     file_infos: &self.state.metadata.file_infos,
-                    peer_has_piece: |p| bf.get(p.get() as usize).map(|v| *v) == Some(true),
+                    // A piece whose expected hash is not known yet (BEP 52: its file's piece
+                    // layer is still being fetched) could not be checked, so it is not requested.
+                    peer_has_piece: |p| {
+                        bf.get(p.get() as usize).map(|v| *v) == Some(true)
+                            && self.state.metadata.info.can_verify_piece(p)
+                    },
                     can_steal: |p| {
                         self.state.per_piece_locks[p.get_usize()]
                             .try_write()
@@ -1813,17 +1867,39 @@ impl PeerHandler {
         if !should_process {
             return Ok(());
         }
+        self.state
+            .process_received_chunk(
+                self.addr,
+                &self.counters,
+                &piece,
+                &chunk_info,
+                piece.len() as u64,
+            )
+            .await
+    }
+}
 
+impl TorrentStateLive {
+    /// Counts, writes and, when it completes its piece, verifies a chunk that `addr` (a peer
+    /// or a web seed) sent; `received` of its bytes came over the network (a web seed does not
+    /// ask for the zeros of padding files). Fails with [`crate::webseed::PieceHashFailed`] when
+    /// the piece it completed failed the hash check (the piece is back in the queue then).
+    pub(crate) async fn process_received_chunk(
+        &self,
+        addr: PeerHandle,
+        counters: &AtomicPeerCounters,
+        piece: &Piece<ByteBuf<'_>>,
+        chunk_info: &ChunkInfo,
+        received: u64,
+    ) -> anyhow::Result<()> {
         // This one is used to calculate download speed.
-        self.state
-            .stats
+        self.stats
             .fetched_bytes
-            .fetch_add(piece.len() as u64, Ordering::Relaxed);
-        self.state
-            .session_stats
+            .fetch_add(received, Ordering::Relaxed);
+        self.session_stats
             .counters
             .fetched_bytes
-            .fetch_add(piece.len() as u64, Ordering::Relaxed);
+            .fetch_add(received, Ordering::Relaxed);
 
         fn write_to_disk(
             state: &TorrentStateLive,
@@ -1922,17 +1998,36 @@ impl PeerHandler {
                 None => return Ok(()),
             };
 
+            // Pieces whose expected hash is unknown (BEP 52: the piece layer of their file was
+            // not fetched yet) are never reserved. Should one complete all the same, it cannot be
+            // trusted: it fails like a piece whose hash did not match, and is downloaded again.
+            if !state.metadata.info.can_verify_piece(chunk_info.piece_index) {
+                warn!(
+                    id = state.shared.id,
+                    info_hash = ?state.shared.info_hash,
+                    ?addr,
+                    "piece={index} cannot be verified yet: its piece layer is not known"
+                );
+                state
+                    .lock_write("mark_piece_unverifiable")
+                    .get_pieces_mut()?
+                    .mark_piece_hash_failed(chunk_info.piece_index);
+                state.new_pieces_notify.notify_waiters();
+                return Err(crate::webseed::PieceHashFailed.into());
+            }
+
             match state
                 .file_ops()
                 .check_piece(chunk_info.piece_index)
                 .with_context(|| format!("error checking piece={index}"))?
             {
                 true => {
-                    {
+                    let file_bytes = {
                         let mut g = state.lock_write("mark_piece_downloaded");
-                        g.get_pieces_mut()?
-                            .mark_piece_hash_ok(chunk_info.piece_index);
-                    }
+                        let pieces = g.get_pieces_mut()?;
+                        pieces.mark_piece_hash_ok(chunk_info.piece_index);
+                        pieces.chunks().file_bytes_in_piece(chunk_info.piece_index)
+                    };
 
                     // Global piece counters.
                     let piece_len = state.lengths.piece_length(chunk_info.piece_index) as u64;
@@ -1948,10 +2043,12 @@ impl PeerHandler {
                         // This counter is used to compute "is_finished", so using
                         // stronger ordering.
                         .fetch_add(1, Ordering::Release);
+                    // Padding is not part of what we have, like in the chunk
+                    // tracker's progress.
                     state
                         .stats
                         .have_bytes
-                        .fetch_add(piece_len, Ordering::Relaxed);
+                        .fetch_add(file_bytes, Ordering::Relaxed);
                     #[allow(clippy::cast_possible_truncation)]
                     state.stats.total_piece_download_ms.fetch_add(
                         full_piece_download_time.as_millis() as u64,
@@ -1980,22 +2077,49 @@ impl PeerHandler {
                         .get_pieces_mut()?
                         .mark_piece_hash_failed(chunk_info.piece_index);
                     state.new_pieces_notify.notify_waiters();
-                    anyhow::bail!("i am probably a bogus peer. dying.")
+                    return Err(crate::webseed::PieceHashFailed.into());
                 }
             };
             Ok(())
         }
 
-        self.state
-            .shared
+        self.shared
             .spawner
             .block_in_place_with_semaphore(|| {
-                write_to_disk(&self.state, self.addr, &self.counters, &piece, &chunk_info)
+                write_to_disk(self, addr, counters, piece, chunk_info)
             })
             .await
             .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
 
         Ok(())
+    }
+}
+
+impl PeerHandler {
+    /// BEP 52: answers a hash request, or rejects it if we cannot answer it or the peer is
+    /// over its budget. Fails, disconnecting the peer, once it kept asking far past it.
+    fn on_hash_request(&self, request: peer_binary_protocol::HashRequest) -> anyhow::Result<()> {
+        let verdict = self.hash_answers.lock().take(Instant::now());
+        let reply = match verdict {
+            hashes::BudgetVerdict::Disconnect => {
+                bail!("peer keeps sending hash requests past its budget")
+            }
+            hashes::BudgetVerdict::Refuse => {
+                debug!(addr = ?self.addr, ?request, "hash request over budget, rejecting");
+                None
+            }
+            hashes::BudgetVerdict::Answer => self.state.answer_hash_request(&request),
+        };
+        let msg = match reply {
+            Some(hashes) => {
+                WriterRequest::Hashes(peer_binary_protocol::Hashes::new(request, &hashes))
+            }
+            None => WriterRequest::Message(Message::HashReject(request)),
+        };
+        self.tx
+            .send(msg)
+            .map_err(|_| Error::PeerTaskDead)
+            .context("error sending the answer to a hash request")
     }
 
     fn send_metadata_piece(&self, piece_id: u32) -> anyhow::Result<()> {

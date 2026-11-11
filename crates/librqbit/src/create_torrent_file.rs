@@ -135,6 +135,7 @@ async fn create_torrent_raw<'a>(
                 output_files.push(TorrentMetaV1File {
                     length,
                     path,
+                    path_utf8: None,
                     attr: None,
                     sha1: None,
                     symlink_path: None,
@@ -154,13 +155,17 @@ async fn create_torrent_raw<'a>(
         }
     }
 
-    if remaining_piece_length > 0 && length > 0 {
+    // A piece that was started but not filled is the last one. Content that ends exactly on a
+    // piece boundary has none: an extra hash of nothing makes libtorrent reject the torrent
+    // ("incorrect number of piece hashes").
+    if remaining_piece_length != piece_length {
         piece_hashes.extend_from_slice(&piece_checksum.finish());
     }
     Ok(CreateTorrentRawResult {
         info: TorrentMetaV1Info {
             name: Some(name),
-            pieces: piece_hashes.into(),
+            name_utf8: None,
+            pieces: Some(piece_hashes.into()),
             piece_length,
             length: if single_file_mode { Some(length) } else { None },
             md5sum: None,
@@ -173,6 +178,8 @@ async fn create_torrent_raw<'a>(
             sha1: None,
             symlink_path: None,
             private: false,
+            meta_version: None,
+            file_tree: None,
         },
         output_folder,
     })
@@ -236,6 +243,9 @@ pub async fn create_torrent<'a>(
             publisher_url: None,
             creation_date: None,
             info_hash,
+            url_list: Vec::new(),
+            info_hash_v2: None,
+            piece_layers: None,
         },
         output_folder: res.output_folder,
     })
@@ -245,7 +255,7 @@ pub async fn create_torrent<'a>(
 mod tests {
     use librqbit_core::torrent_metainfo::torrent_from_bytes;
 
-    use crate::{create_torrent, spawn_utils::BlockingSpawner};
+    use crate::{CreateTorrentOptions, create_torrent, spawn_utils::BlockingSpawner};
 
     #[tokio::test]
     async fn test_create_torrent() {
@@ -264,5 +274,46 @@ mod tests {
 
         let deserialized = torrent_from_bytes(&bytes).unwrap();
         assert_eq!(torrent.info_hash(), deserialized.info_hash);
+    }
+
+    async fn piece_count(files: &[(&str, usize)], piece_length: u32) -> usize {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, len) in files {
+            std::fs::write(dir.path().join(name), vec![7u8; *len]).unwrap();
+        }
+        let torrent = create_torrent(
+            dir.path(),
+            CreateTorrentOptions {
+                piece_length: Some(piece_length),
+                ..Default::default()
+            },
+            &BlockingSpawner::new(1),
+        )
+        .await
+        .unwrap();
+        torrent
+            .meta
+            .info
+            .data
+            .pieces
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .len()
+            / 20
+    }
+
+    // libtorrent rejects a torrent that has more piece hashes than pieces.
+    #[tokio::test]
+    async fn test_content_ending_on_a_piece_boundary_has_no_extra_piece() {
+        assert_eq!(piece_count(&[("a", 4 * 1024)], 1024).await, 4);
+        assert_eq!(piece_count(&[("a", 4 * 1024 + 1)], 1024).await, 5);
+        assert_eq!(piece_count(&[("a", 1)], 1024).await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_empty_file_does_not_drop_the_last_piece() {
+        // Whatever order the two files are read in, there are 1500 bytes: two pieces.
+        assert_eq!(piece_count(&[("a", 1500), ("b", 0)], 1024).await, 2);
     }
 }

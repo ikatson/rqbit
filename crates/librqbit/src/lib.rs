@@ -81,6 +81,7 @@ pub mod upnp_server_adapter;
 mod vectored_traits;
 #[cfg(feature = "watch")]
 pub mod watch;
+mod webseed;
 
 pub use error::{Error, Result};
 
@@ -95,16 +96,22 @@ pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListOnlyResponse,
     SUPPORTED_SCHEMES, Session, SessionOptions, SessionPersistenceConfig,
 };
+pub use storage::MoveStorageMode;
 pub use stream_connect::ConnectionOptions;
 pub use torrent_state::{
     ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, TorrentMetadata, TorrentStats,
     TorrentStatsState,
 };
 pub use type_aliases::FileInfos;
+pub use webseed::{WebSeedState, WebSeedStats};
 
 pub use buffers::*;
 pub use clone_to_owned::CloneToOwned;
+/// Version-independent piece verification (v1 SHA-1, v2 merkle, both for hybrid torrents),
+/// re-exported so that an embedder can check data on disk against a torrent's metadata.
+pub use librqbit_core::lengths::{Lengths, ValidPieceIndex};
 pub use librqbit_core::magnet::*;
+pub use librqbit_core::metainfo_v2::{PieceVerdict, PieceVerifier, TorrentVersion};
 pub use librqbit_core::peer_id::*;
 pub use librqbit_core::torrent_metainfo::*;
 
