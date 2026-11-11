@@ -26,17 +26,17 @@ use tokio::{
 
 use crate::{
     AddTorrent, AddTorrentOptions, ConnectionOptions, CreateTorrentOptions, ListenerOptions,
-    Session, SessionOptions, create_torrent,
+    PeerPolicy, Session, SessionOptions, create_torrent,
     limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
-    tests::test_util::{create_default_random_dir_with_torrents, setup_test_logging},
+    tests::test_util::{create_default_random_dir_with_torrents, setup_test_logging, wait_until},
     torrent_state::ManagedTorrentHandle,
 };
 
 pub(super) const PIECE_LEN: u32 = 32 * 1024;
 pub(super) const BLOCK: u32 = 16 * 1024;
 pub(super) const PIECES: u32 = 4;
-const FILE_LEN: usize = (PIECE_LEN * PIECES) as usize;
+pub(super) const FILE_LEN: usize = (PIECE_LEN * PIECES) as usize;
 
 pub(super) async fn run(fut: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
     setup_test_logging();
@@ -321,7 +321,10 @@ impl Fixture {
 
 #[derive(Default)]
 pub(super) struct SeederOpts {
+    pub(super) policy: Option<Arc<dyn PeerPolicy>>,
     pub(super) upload_bps: Option<u32>,
+    /// Number of files of the torrent (default 1); the total size is the same.
+    pub(super) files: Option<usize>,
 }
 
 fn loopback_listener() -> ListenerOptions {
@@ -332,9 +335,14 @@ fn loopback_listener() -> ListenerOptions {
     }
 }
 
-/// A session listening on loopback that has the whole (one file) torrent.
+/// A session listening on loopback that has the whole torrent.
 pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
-    let dir = create_default_random_dir_with_torrents(1, FILE_LEN, Some("rqbit_fake_peer_seed"));
+    let files = opts.files.unwrap_or(1);
+    let dir = create_default_random_dir_with_torrents(
+        files,
+        FILE_LEN / files,
+        Some("rqbit_fake_peer_seed"),
+    );
     let torrent = create_torrent(
         dir.path(),
         CreateTorrentOptions {
@@ -345,7 +353,10 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
         &BlockingSpawner::new(1),
     )
     .await?;
-    let content = std::fs::read(dir.path().join("0.data"))?;
+    let mut content = Vec::new();
+    for f in 0..files {
+        content.extend(std::fs::read(dir.path().join(format!("{f}.data")))?);
+    }
     let torrent_bytes = torrent.as_bytes()?;
     let session = Session::new_with_opts(
         dir.path().into(),
@@ -359,6 +370,7 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
                 upload_bps: opts.upload_bps.and_then(NonZeroU32::new),
                 download_bps: None,
             },
+            peer_policy: opts.policy,
             ..Default::default()
         },
     )
@@ -394,8 +406,13 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
 
 #[derive(Default)]
 pub(super) struct ClientOpts {
+    pub(super) policy: Option<Arc<dyn PeerPolicy>>,
     pub(super) listen: bool,
     pub(super) initial_peers: Vec<SocketAddr>,
+    pub(super) only_files: Option<Vec<usize>>,
+    pub(super) download_bps: Option<u32>,
+    /// Allow IPv6 peers (the default is IPv4 only).
+    pub(super) dual_stack: bool,
 }
 
 /// A client downloading the torrent of `seed` into an empty folder.
@@ -408,8 +425,13 @@ pub(super) async fn start_client(seed: &Fixture, opts: ClientOpts) -> anyhow::Re
             persistence: None,
             listen: opts.listen.then(loopback_listener),
             connect: Some(ConnectionOptions::default()),
-            ipv4_only: true,
+            ipv4_only: !opts.dual_stack,
             disable_local_service_discovery: true,
+            ratelimits: LimitsConfig {
+                upload_bps: None,
+                download_bps: opts.download_bps.and_then(NonZeroU32::new),
+            },
+            peer_policy: opts.policy,
             ..Default::default()
         },
     )
@@ -420,6 +442,7 @@ pub(super) async fn start_client(seed: &Fixture, opts: ClientOpts) -> anyhow::Re
             AddTorrent::from_bytes(seed.torrent_bytes.clone()),
             Some(AddTorrentOptions {
                 paused: false,
+                only_files: opts.only_files,
                 initial_peers: (!opts.initial_peers.is_empty()).then_some(opts.initial_peers),
                 ..Default::default()
             }),
@@ -444,6 +467,20 @@ pub(super) fn uploaded(f: &Fixture) -> u64 {
     f.handle.live().map_or(0, |l| l.get_uploaded_bytes())
 }
 
+/// A block is counted as uploaded once its write returns, which may be after the peer has read
+/// it: the counter is waited for.
+pub(super) async fn expect_uploaded(f: &Fixture, bytes: u64) -> anyhow::Result<()> {
+    wait_until(
+        || {
+            let got = uploaded(f);
+            anyhow::ensure!(got == bytes, "uploaded {got}, expected {bytes}");
+            Ok(())
+        },
+        Duration::from_secs(5),
+    )
+    .await
+}
+
 // The harness itself: a session serves the blocks a wire-level peer asks for.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fake_peer_downloads_a_block_from_a_seeder() -> anyhow::Result<()> {
@@ -456,7 +493,7 @@ async fn test_fake_peer_downloads_a_block_from_a_seeder() -> anyhow::Result<()> 
         let pieces = peer.expect_pieces(1, Duration::from_secs(10)).await?;
         assert_eq!((pieces[0].0, pieces[0].1), (1, BLOCK));
         assert_eq!(pieces[0].2, seed.block(1, BLOCK, BLOCK));
-        assert_eq!(uploaded(&seed), BLOCK as u64);
+        expect_uploaded(&seed, BLOCK as u64).await?;
         Ok(())
     })
     .await
