@@ -1092,11 +1092,25 @@ impl Session {
             .values()
             .cloned()
             .collect::<Vec<_>>();
+        let mut stopped = Vec::with_capacity(torrents.len());
         for torrent in torrents {
             torrent.shared().tracker_comms.stop();
+            stopped.push(torrent.shared().tracker_comms.wait_stopped());
             if let Err(e) = torrent.pause() {
                 debug!("error pausing torrent: {e:#}");
             }
+        }
+        // The `stopped` announces need the session alive (the UDP tracker client stops with
+        // it), so they are given their time first. Each is bounded by itself; this bound is
+        // only a backstop.
+        if tokio::time::timeout(
+            TrackerTimings::default().stopped_timeout,
+            futures::future::join_all(stopped),
+        )
+        .await
+        .is_err()
+        {
+            debug!("not all stopped announces are done, stopping anyway");
         }
         self.cancellation_token.cancel();
         // this sucks, but hopefully will be enough
@@ -1269,8 +1283,26 @@ impl Session {
 
         let private = metadata.as_ref().is_some_and(|m| m.info.info().private);
 
+        // A torrent that is managed already is not looked for a second time: the trackers
+        // can't tell a second instance from the running one, so its announces (and above all
+        // its `stopped`) would count for the running torrent.
+        let already_managed = self
+            .db
+            .read()
+            .torrents
+            .iter()
+            .find_map(|(eid, t)| (t.info_hash() == info_hash).then(|| (*eid, t.clone())));
+        if let Some((id, handle)) = &already_managed
+            && !opts.list_only
+        {
+            return Ok(AddTorrentResponse::AlreadyManaged(*id, handle.clone()));
+        }
+
         let tracker_comms =
             self.new_torrent_trackers(info_hash, tiers, private, opts.force_tracker_interval);
+        if already_managed.is_some() {
+            tracker_comms.suppress_stopped();
+        }
         let make_peer_rx = || {
             self.make_peer_rx(
                 info_hash,
@@ -1304,6 +1336,11 @@ impl Session {
                             opts.peer_opts,
                         )
                         .await?;
+                    // Session trackers were added when it was not known yet that the torrent
+                    // is private (BEP 27): they go now.
+                    if resolved_magnet.metadata.info.info().private {
+                        tracker_comms.drop_session_tiers();
+                    }
 
                     // Add back seen_peers into the peer stream, as we consumed some peers
                     // while resolving the magnet.
@@ -1378,6 +1415,8 @@ impl Session {
                     None
                 }
             }) {
+                // Added meanwhile: this instance did look for peers, see above.
+                tracker_comms.suppress_stopped();
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
             }
             if let Some(existing) = g.torrents.get(&id) {

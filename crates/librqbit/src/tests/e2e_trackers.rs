@@ -20,7 +20,8 @@ use tokio::{
 };
 
 use crate::{
-    AddTorrent, AddTorrentOptions, ConnectionOptions, Session, SessionOptions, TrackerState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ConnectionOptions, Session, SessionOptions,
+    TrackerState,
     api::TorrentIdOrHash,
     tests::fake_peer::{SeederOpts, run, start_seeder},
     torrent_state::ManagedTorrentHandle,
@@ -361,6 +362,197 @@ async fn test_tracker_stats_follow_the_announces() -> anyhow::Result<()> {
         // A torrent that is not announcing cannot be asked to announce.
         assert!(session.reannounce(&handle).is_err());
         session.unpause(&handle).await?;
+        Ok(())
+    })
+    .await
+}
+
+/// Waits until `f` holds, polling.
+async fn eventually(what: &str, mut f: impl FnMut() -> bool) -> anyhow::Result<()> {
+    let deadline = Instant::now() + WAIT;
+    while !f() {
+        anyhow::ensure!(Instant::now() < deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    Ok(())
+}
+
+/// How many announces `tracker` got with `event`.
+fn count_event(tracker: &FakeTracker, event: &str) -> usize {
+    tracker
+        .events()
+        .iter()
+        .filter(|e| e.as_deref() == Some(event))
+        .count()
+}
+
+/// A copy of `torrent` with `private` set (BEP 27) and `announce` as its only tracker. Its
+/// info hash differs, its content is the same.
+fn private_copy(torrent: &[u8], announce: &str) -> anyhow::Result<bytes::Bytes> {
+    let parsed = librqbit_core::torrent_metainfo::torrent_from_bytes(torrent)?;
+    let info = parsed.info.raw_bytes.as_ref();
+    // "private" sorts after every key of a single-file info dict ("length", "name",
+    // "piece length", "pieces"), so it goes right before the dict ends.
+    let body = info.strip_suffix(b"e").context("info is not a dict")?;
+    let mut out = format!("d8:announce{}:{announce}4:info", announce.len()).into_bytes();
+    out.extend_from_slice(body);
+    out.extend_from_slice(b"7:privatei1ee");
+    out.push(b'e');
+    Ok(out.into())
+}
+
+/// A session that only talks to trackers, with `trackers` as its own tracker list
+/// (`SessionOptions::trackers`).
+async fn session_with_trackers(
+    dir: &std::path::Path,
+    trackers: &[&FakeTracker],
+) -> anyhow::Result<Arc<Session>> {
+    Session::new_with_opts(
+        dir.into(),
+        SessionOptions {
+            dht: None,
+            persistence: None,
+            listen: None,
+            connect: Some(ConnectionOptions::default()),
+            ipv4_only: true,
+            disable_local_service_discovery: true,
+            trackers: trackers
+                .iter()
+                .map(|t| t.url().parse())
+                .collect::<Result<_, _>>()?,
+            ..Default::default()
+        },
+    )
+    .await
+    .context("error creating session")
+}
+
+// Adding a torrent that runs already, again (by file or by magnet) or as a list-only preview,
+// must not tell the trackers that the running one stopped: they can't tell the two apart.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_adding_a_running_torrent_again_sends_no_stopped() -> anyhow::Result<()> {
+    run(async {
+        let seed = start_seeder(SeederOpts::default()).await?;
+        let tracker = FakeTracker::start().await?;
+        let dir = tempfile::tempdir()?;
+        let session = tracker_session(dir.path()).await?;
+        let handle = add_with_tracker(
+            &session,
+            seed.torrent_bytes.clone(),
+            &tracker,
+            seed._dir.path(),
+            None,
+        )
+        .await?;
+        tracker.wait_for_announces(1, WAIT).await?;
+
+        let again = add_with_tracker(
+            &session,
+            seed.torrent_bytes.clone(),
+            &tracker,
+            dir.path(),
+            None,
+        )
+        .await?;
+        assert_eq!(again.id(), handle.id());
+        let magnet = format!(
+            "magnet:?xt=urn:btih:{}&tr={}",
+            seed.info_hash.as_string(),
+            tracker.url()
+        );
+        let res = session
+            .add_torrent(AddTorrent::from_url(&magnet), None)
+            .await?;
+        assert!(matches!(res, AddTorrentResponse::AlreadyManaged(..)));
+        // The preview has to look for the metadata, so it does announce.
+        let res = session
+            .add_torrent(
+                AddTorrent::from_url(&magnet),
+                Some(AddTorrentOptions {
+                    list_only: true,
+                    initial_peers: Some(vec![seed.addr.context("seeder listens")?]),
+                    ..Default::default()
+                }),
+            )
+            .await?;
+        assert!(matches!(res, AddTorrentResponse::ListOnly(..)));
+
+        session.pause(&handle).await?;
+        eventually("the stopped of the pause", || {
+            count_event(&tracker, "stopped") >= 1
+        })
+        .await?;
+        // Everything before the pause is out by now: the pause waits for nothing, but a
+        // stopped of the preview would have been sent before the preview returned.
+        assert_eq!(
+            count_event(&tracker, "stopped"),
+            1,
+            "only the pause says stopped: {:?}",
+            tracker.events()
+        );
+        assert_eq!(tracker.events().last(), Some(&some("stopped")));
+        Ok(())
+    })
+    .await
+}
+
+// A private torrent added from a file keeps its own trackers and never gets the session's.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_private_torrent_file_gets_no_session_trackers() -> anyhow::Result<()> {
+    run(async {
+        let seed = start_seeder(SeederOpts::default()).await?;
+        let own = FakeTracker::start().await?;
+        let sessions = FakeTracker::start().await?;
+        let dir = tempfile::tempdir()?;
+        let session = session_with_trackers(dir.path(), &[&sessions]).await?;
+        let handle = session
+            .add_torrent(
+                AddTorrent::from_bytes(private_copy(&seed.torrent_bytes, &own.url())?),
+                Some(AddTorrentOptions {
+                    paused: false,
+                    overwrite: true,
+                    output_folder: Some(seed._dir.path().to_str().context("path")?.to_owned()),
+                    ..Default::default()
+                }),
+            )
+            .await?
+            .into_handle()
+            .context("into_handle")?;
+        own.wait_for_announces(1, WAIT).await?;
+        let rows = handle.trackers();
+        assert_eq!(
+            rows.iter().map(|r| r.url.as_str()).collect::<Vec<_>>(),
+            vec![own.url()]
+        );
+        session.pause(&handle).await?;
+        own.wait_for_announces(2, WAIT).await?;
+        assert!(sessions.events().is_empty(), "{:?}", sessions.events());
+        Ok(())
+    })
+    .await
+}
+
+// Stopping the session gives the stopped announces their time before the session (and with
+// it the UDP tracker client) goes away.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_session_stop_delivers_stopped() -> anyhow::Result<()> {
+    run(async {
+        let seed = start_seeder(SeederOpts::default()).await?;
+        let tracker = FakeTracker::start().await?;
+        let dir = tempfile::tempdir()?;
+        let session = tracker_session(dir.path()).await?;
+        add_with_tracker(
+            &session,
+            seed.torrent_bytes.clone(),
+            &tracker,
+            seed._dir.path(),
+            None,
+        )
+        .await?;
+        tracker.wait_for_announces(1, WAIT).await?;
+        session.stop().await;
+        // No waiting here: it is out by the time stop() returns.
+        assert_eq!(tracker.events(), vec![some("started"), some("stopped")]);
         Ok(())
     })
     .await
