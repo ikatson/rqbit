@@ -253,6 +253,31 @@ pub async fn h_torrent_action_update_only_files(
         .map(axum::Json)
 }
 
+pub async fn h_torrent_file_priorities(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    state.api.api_torrent_file_priorities(idx).map(axum::Json)
+}
+
+#[derive(Deserialize)]
+pub struct SetFilePrioritiesRequest {
+    // (file index, level) pairs; the files not listed keep their level.
+    file_priorities: Vec<(usize, u8)>,
+}
+
+pub async fn h_torrent_action_set_file_priorities(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<SetFilePrioritiesRequest>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_set_file_priorities(idx, &req.file_priorities)
+        .await
+        .map(axum::Json)
+}
+
 pub async fn h_session_stats(State(state): State<ApiState>) -> impl IntoResponse {
     axum::Json(state.api.api_session_stats())
 }

@@ -42,6 +42,7 @@ use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
 use crate::piece_picker::PiecePicking;
+use crate::priority::Priorities;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
@@ -65,6 +66,10 @@ pub use self::streaming::FileStream;
 //
 // - initializing -> error
 // - live -> error
+//
+// The paused state is held inline, larger than the others: there is one per torrent and
+// it's swapped rarely, so boxing it would only add an allocation per pause.
+#[allow(clippy::large_enum_variant)]
 pub enum ManagedTorrentState {
     Initializing(Arc<TorrentStateInitializing>),
     Paused(TorrentStatePaused),
@@ -105,7 +110,9 @@ pub(crate) struct ManagedTorrentLocked {
     // This should change only on "unpause".
     pub(crate) paused: bool,
     pub(crate) state: ManagedTorrentState,
-    pub(crate) only_files: Option<Vec<usize>>,
+    // What the user asked to download. Kept here, not in the live state, so it survives pause /
+    // resume and applies once an initial check finishes.
+    pub(crate) priorities: Priorities,
     // Kept here, not in the live state, so it survives pause / resume.
     pub(crate) piece_picking: PiecePicking,
 }
@@ -253,8 +260,40 @@ impl ManagedTorrent {
         self.shared.info_hash
     }
 
+    /// The files with a non-zero priority, or None when every file that is not padding has one.
     pub fn only_files(&self) -> Option<Vec<usize>> {
-        self.locked.read().only_files.clone()
+        let metadata = self.metadata.load();
+        let metadata = metadata.as_ref()?;
+        self.locked
+            .read()
+            .priorities
+            .only_files(&metadata.file_infos)
+    }
+
+    /// The priority of every file, by file index. Padding files report 0.
+    pub fn file_priorities(&self) -> Vec<u8> {
+        self.locked.read().priorities.files().to_vec()
+    }
+
+    /// The effective priority of every piece, by piece index: its explicit level if it has one,
+    /// otherwise the highest level of the files it overlaps. Empty while the torrent is not
+    /// resolved.
+    pub fn piece_priorities(&self) -> Vec<u8> {
+        let metadata = self.metadata.load();
+        let Some(metadata) = metadata.as_ref() else {
+            return Vec::new();
+        };
+        self.locked
+            .read()
+            .priorities
+            .piece_levels(metadata.lengths(), &metadata.file_infos)
+            .as_slice()
+            .to_vec()
+    }
+
+    /// The explicit per-piece priorities, by piece index.
+    pub(crate) fn piece_priority_overrides(&self) -> Vec<(u32, u8)> {
+        self.locked.read().priorities.piece_overrides().collect()
     }
 
     /// How the torrent orders the pieces it downloads.
@@ -409,6 +448,15 @@ impl ManagedTorrent {
                                         return Ok(());
                                     }
 
+                                    let mut paused = paused;
+                                    // Priorities may have changed while the check ran.
+                                    if g.priorities != init.priorities {
+                                        let levels = g.priorities.piece_levels(
+                                            init.metadata.lengths(),
+                                            &init.metadata.file_infos,
+                                        );
+                                        paused.set_piece_levels(levels)?;
+                                    }
                                     g.state = ManagedTorrentState::Paused(paused);
                                     t.state_change_notify.notify_waiters();
                                     _start(&t, peer_rx, start_paused, session, Some(g), token)
@@ -436,12 +484,10 @@ impl ManagedTorrent {
                     }
                     let paused = g.state.take().assert_paused();
                     let (tx, rx) = tokio::sync::oneshot::channel();
-                    let only_files: Option<HashSet<usize>> =
-                        g.only_files.as_ref().map(|f| f.iter().copied().collect());
                     let live = TorrentStateLive::new(
                         paused,
                         g.piece_picking,
-                        only_files.as_ref(),
+                        g.priorities.files(),
                         tx,
                         token.clone(),
                     )?;
@@ -459,7 +505,7 @@ impl ManagedTorrent {
                     let initializing = Arc::new(TorrentStateInitializing::new(
                         t.shared.clone(),
                         metadata.clone(),
-                        g.only_files.clone(),
+                        g.priorities.clone(),
                         t.shared
                             .storage_factory
                             .create_and_init(t.shared(), &metadata)?,
@@ -639,36 +685,49 @@ impl ManagedTorrent {
         .boxed()
     }
 
-    // Returns true if needed to unpause torrent.
-    // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
+    /// Sets the priority of some files, `(file index, level)`. An unknown index or a level above
+    /// 7 is an error and changes nothing.
+    pub(crate) fn set_file_priorities(&self, priorities: &[(usize, u8)]) -> anyhow::Result<()> {
+        self.update_priorities(|p, file_infos, _| p.set_files(file_infos, priorities))
+    }
+
+    /// Sets (`Some`) or clears (`None`) explicit priorities of pieces, `(piece index, level)`.
+    /// An unknown piece or a level above 7 is an error and changes nothing.
+    pub(crate) fn set_piece_priorities(
+        &self,
+        priorities: &[(u32, Option<u8>)],
+    ) -> anyhow::Result<()> {
+        self.update_priorities(|p, _, lengths| p.set_pieces(lengths.total_pieces(), priorities))
+    }
+
+    /// Downloads exactly `only_files`: the files outside it get priority 0, the files in it keep
+    /// theirs, or become normal if they were at 0.
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
+        self.update_priorities(|p, file_infos, _| p.set_only_files(file_infos, only_files))
+    }
+
+    /// Changes the priorities with `change`, then applies them to the current state: a paused
+    /// or live torrent right away, an initializing one when its check finishes, an errored one
+    /// when it restarts.
+    fn update_priorities(
+        &self,
+        change: impl FnOnce(&mut Priorities, &FileInfos, &Lengths) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
         let metadata = self.metadata.load();
         let metadata = metadata.as_ref().context("torrent is not resolved")?;
-        let file_count = metadata.file_infos.len();
-        for f in only_files.iter().copied() {
-            if f >= file_count {
-                anyhow::bail!("only_files contains invalid value {f}")
-            }
-        }
-
-        // if live, need to update chunk tracker
-        // - if already finished: need to pause, then unpause (to reopen files etc)
-        // if paused, need to update chunk tracker
 
         let mut g = self.locked.write();
+        let mut priorities = g.priorities.clone();
+        change(&mut priorities, &metadata.file_infos, metadata.lengths())?;
+        let levels = priorities.piece_levels(metadata.lengths(), &metadata.file_infos);
         match &mut g.state {
-            ManagedTorrentState::Initializing(_) => bail!("can't update initializing torrent"),
-            ManagedTorrentState::Error(_) => {}
-            ManagedTorrentState::None => {}
-            ManagedTorrentState::Paused(p) => {
-                p.update_only_files(only_files)?;
-            }
-            ManagedTorrentState::Live(l) => {
-                l.update_only_files(only_files)?;
-            }
+            ManagedTorrentState::Initializing(_)
+            | ManagedTorrentState::Error(_)
+            | ManagedTorrentState::None => {}
+            ManagedTorrentState::Paused(p) => p.set_piece_levels(levels)?,
+            ManagedTorrentState::Live(l) => l.set_priorities(levels, priorities.files())?,
         };
-
-        g.only_files = Some(only_files.iter().copied().collect());
+        g.priorities = priorities;
         Ok(())
     }
 }

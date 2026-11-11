@@ -10,7 +10,7 @@
 //! - NOT_NEEDED (not selected for download)
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     time::{Duration, Instant},
 };
 
@@ -19,10 +19,11 @@ use librqbit_core::lengths::ValidPieceIndex;
 use peer_binary_protocol::Piece;
 
 use crate::{
-    chunk_tracker::{ChunkMarkingResult, ChunkTracker},
+    chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
     file_info::FileInfo,
     piece_picker::{PieceAvailability, PiecePicker},
-    type_aliases::{FileInfos, PeerHandle},
+    priority::PieceLevels,
+    type_aliases::PeerHandle,
 };
 
 /// Tracks a piece currently being downloaded.
@@ -110,8 +111,6 @@ impl PieceTracker {
         self.chunks
     }
 
-    // === PIECE ACQUISITION ===
-
     /// Attempt to acquire a piece for the requesting peer.
     ///
     /// The acquisition strategy is:
@@ -119,6 +118,9 @@ impl PieceTracker {
     /// 2. Try to reserve a piece from the queue (priority pieces first, then as `picker` orders
     ///    the queue)
     /// 3. Try to steal a piece from a peer that's 3x slower
+    ///
+    /// A steal takes the highest-priority piece that qualifies, and step 1 gives way when the
+    /// queue has a piece of a higher priority for this peer.
     ///
     /// If `Stolen` is returned, the caller MUST call `peers.on_steal()` to notify
     /// the old peer and update counters.
@@ -128,9 +130,21 @@ impl PieceTracker {
         P: Fn(ValidPieceIndex) -> bool,
         S: Fn(ValidPieceIndex) -> bool,
     {
+        // The queue pick, once computed. Only needed this early when a steal has to be weighed
+        // against it, which never happens while every wanted piece has the same level.
+        let mut picked = None;
+
         // 1. Try steal with 10x threshold (very slow peer)
-        if let Some(result) = self.try_steal(&req, 10.0) {
-            return result;
+        if let Some((piece, level)) = self.steal_candidate(&req, 10.0) {
+            let levels = self.chunks.piece_levels();
+            let beaten = level < levels.top() && {
+                let p = self.pick_queued(&req);
+                picked = Some(p);
+                p.is_some_and(|p| levels.get(p.get_usize()) > level)
+            };
+            if !beaten && let Some(result) = self.steal(piece, &req) {
+                return result;
+            }
         }
 
         // 2. Try reserve from priority_pieces then queued pieces
@@ -145,11 +159,32 @@ impl PieceTracker {
         }
 
         // Then the queue (it holds no in-flight pieces), in the picker's order.
+        if let Some(piece) = picked.unwrap_or_else(|| self.pick_queued(&req)) {
+            return self.reserve_piece(piece, req.peer);
+        }
+
+        // 3. Try steal with 3x threshold (moderately slow peer)
+        if let Some((piece, _)) = self.steal_candidate(&req, 3.0)
+            && let Some(result) = self.steal(piece, &req)
+        {
+            return result;
+        }
+
+        AcquireResult::NoneAvailable
+    }
+
+    /// The queued piece the picker chooses for this peer.
+    fn pick_queued<I, P, S>(&self, req: &AcquireRequest<I, P, S>) -> Option<ValidPieceIndex>
+    where
+        I: Iterator<Item = ValidPieceIndex>,
+        P: Fn(ValidPieceIndex) -> bool,
+        S: Fn(ValidPieceIndex) -> bool,
+    {
         let lengths = *self.chunks.get_lengths();
-        let picked = req
-            .picker
+        req.picker
             .pick(
                 self.chunks.queued_pieces(),
+                self.chunks.piece_levels(),
                 self.chunks.get_hns().have_bytes,
                 req.availability,
                 |p| {
@@ -160,17 +195,7 @@ impl PieceTracker {
                 },
             )
             .and_then(|p| u32::try_from(p).ok())
-            .and_then(|p| lengths.validate_piece_index(p));
-        if let Some(piece) = picked {
-            return self.reserve_piece(piece, req.peer);
-        }
-
-        // 3. Try steal with 3x threshold (moderately slow peer)
-        if let Some(result) = self.try_steal(&req, 3.0) {
-            return result;
-        }
-
-        AcquireResult::NoneAvailable
+            .and_then(|p| lengths.validate_piece_index(p))
     }
 
     /// Reserve a piece: remove from queue, add to inflight.
@@ -186,12 +211,14 @@ impl PieceTracker {
         AcquireResult::Reserved(piece)
     }
 
-    /// Try to steal a piece from a slower peer.
-    fn try_steal<I, P, S>(
-        &mut self,
+    /// The piece to steal from a slower peer, with its level: of the pieces another peer has
+    /// been downloading for `threshold` times this peer's average and that this peer has, the
+    /// highest level, and inside it the one in flight the longest.
+    fn steal_candidate<I, P, S>(
+        &self,
         req: &AcquireRequest<I, P, S>,
         threshold: f64,
-    ) -> Option<AcquireResult>
+    ) -> Option<(ValidPieceIndex, u8)>
     where
         I: Iterator<Item = ValidPieceIndex>,
         P: Fn(ValidPieceIndex) -> bool,
@@ -199,18 +226,31 @@ impl PieceTracker {
     {
         let my_avg = req.peer_avg_time?;
         let min_elapsed = Duration::from_secs_f64(my_avg.as_secs_f64() * threshold);
+        let levels = self.chunks.piece_levels();
 
         // Find the slowest piece from another peer that exceeds threshold
         // and that the stealing peer actually has (can download)
-        let (piece, old_peer, _) = self
-            .inflight
+        self.inflight
             .iter()
             .filter(|(_, info)| info.peer != req.peer)
             .filter(|(p, _)| (req.peer_has_piece)(**p))
-            .map(|(p, info)| (*p, info.peer, info.started.elapsed()))
-            .filter(|(_, _, elapsed)| *elapsed >= min_elapsed)
-            .max_by_key(|(_, _, elapsed)| *elapsed)?;
+            .map(|(p, info)| (*p, info.started.elapsed()))
+            .filter(|(_, elapsed)| *elapsed >= min_elapsed)
+            .max_by_key(|(p, elapsed)| (levels.get(p.get_usize()), *elapsed))
+            .map(|(p, _)| (p, levels.get(p.get_usize())))
+    }
 
+    /// Hands an in-flight piece to the requesting peer, unless `can_steal` refuses it.
+    fn steal<I, P, S>(
+        &mut self,
+        piece: ValidPieceIndex,
+        req: &AcquireRequest<I, P, S>,
+    ) -> Option<AcquireResult>
+    where
+        I: Iterator<Item = ValidPieceIndex>,
+        P: Fn(ValidPieceIndex) -> bool,
+        S: Fn(ValidPieceIndex) -> bool,
+    {
         // Check can_steal (e.g., per_piece_lock)
         if !(req.can_steal)(piece) {
             return None;
@@ -218,6 +258,7 @@ impl PieceTracker {
 
         // Update ownership (piece stays in inflight, just changes owner)
         let info = self.inflight.get_mut(&piece)?;
+        let old_peer = info.peer;
         info.peer = req.peer;
         info.started = Instant::now();
 
@@ -299,13 +340,34 @@ impl PieceTracker {
         self.chunks.mark_chunk_downloaded(piece)
     }
 
-    /// Update which files are selected for download.
-    pub fn update_only_files(
+    /// Changes the effective priority of the pieces.
+    ///
+    /// Pieces that become wanted are queued; pieces whose level drops to 0 leave the queue, and
+    /// the ones of them in flight are released: they leave the in-flight map and their partly
+    /// written chunks are forgotten. Returns the new byte accounting and the released pieces
+    /// with the peers that were downloading them, whose requests the caller must cancel.
+    /// Pieces that were already at 0 stay in flight: a stream reserved them.
+    pub fn set_piece_levels(
         &mut self,
-        file_infos: &FileInfos,
-        new_only_files: &HashSet<usize>,
-    ) -> anyhow::Result<crate::chunk_tracker::HaveNeededSelected> {
-        self.chunks.update_only_files(file_infos, new_only_files)
+        levels: PieceLevels,
+    ) -> anyhow::Result<(HaveNeededSelected, Vec<(ValidPieceIndex, PeerHandle)>)> {
+        let old = self.chunks.piece_levels();
+        let released: Vec<(ValidPieceIndex, PeerHandle)> = self
+            .inflight
+            .iter()
+            .filter(|(p, _)| old.get(p.get_usize()) > 0 && levels.get(p.get_usize()) == 0)
+            .map(|(p, info)| (*p, info.peer))
+            .collect();
+        let inflight = &self.inflight;
+        let hns = self
+            .chunks
+            .set_piece_levels(levels, |p| inflight.contains_key(&p))?;
+        for (piece, _) in &released {
+            self.inflight.remove(piece);
+            // Not selected any more, so this forgets its chunks without queueing it.
+            self.chunks.mark_piece_broken_if_not_have(*piece);
+        }
+        Ok((hns, released))
     }
 
     /// Update per-file have bytes when a piece completes. Returns remaining bytes for the file.
@@ -328,7 +390,10 @@ impl PieceTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bitv::BitV as BitVTrait, type_aliases::BF};
+    use crate::{
+        bitv::BitV as BitVTrait,
+        type_aliases::{BF, FileInfos},
+    };
     use librqbit_core::lengths::Lengths;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -351,10 +416,7 @@ mod tests {
         let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
 
         // All pieces selected
-        let mut selected = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
-        for i in 0..num_pieces as usize {
-            selected.set(i, true);
-        }
+        let levels = PieceLevels::new(vec![1u8; num_pieces as usize].into_boxed_slice());
 
         // Single file spanning all pieces
         let file_infos = vec![crate::file_info::FileInfo {
@@ -365,7 +427,7 @@ mod tests {
             attrs: Default::default(),
         }];
 
-        ChunkTracker::new(have.into_dyn(), selected, lengths, &file_infos).unwrap()
+        ChunkTracker::new(have.into_dyn(), levels, lengths, &file_infos).unwrap()
     }
 
     fn make_test_file_infos(num_pieces: u32) -> FileInfos {
@@ -392,7 +454,7 @@ mod tests {
             ..Default::default()
         };
         (
-            PiecePicker::new(picking, lengths, file_infos, None),
+            PiecePicker::new(picking, lengths, file_infos, &vec![1; file_infos.len()]),
             PieceAvailability::new(total),
         )
     }

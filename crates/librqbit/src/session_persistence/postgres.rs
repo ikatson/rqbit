@@ -28,6 +28,11 @@ struct TorrentsTableRecord {
     is_paused: bool,
     sequential: bool,
     first_last_pieces_first: bool,
+    // NULL in rows written before priorities.
+    file_priorities: Option<Vec<i16>>,
+    // Explicit piece priorities as two parallel arrays: piece index and level.
+    piece_priority_pieces: Vec<i64>,
+    piece_priority_levels: Vec<i16>,
 }
 
 impl TorrentsTableRecord {
@@ -47,6 +52,20 @@ impl TorrentsTableRecord {
                     sequential: self.sequential,
                     first_last_pieces_first: self.first_last_pieces_first,
                 },
+                // A level that doesn't fit a u8 can't have been written by us: fall back to
+                // `only_files` rather than shift the other files' levels. Piece entries are
+                // independent, so a bad one is just dropped.
+                file_priorities: self.file_priorities.and_then(|v| {
+                    v.into_iter()
+                        .map(|l| u8::try_from(l).ok())
+                        .collect::<Option<Vec<u8>>>()
+                }),
+                piece_priorities: self
+                    .piece_priority_pieces
+                    .into_iter()
+                    .zip(self.piece_priority_levels)
+                    .filter_map(|(p, l)| Some((u32::try_from(p).ok()?, u8::try_from(l).ok()?)))
+                    .collect(),
             },
         ))
     }
@@ -92,6 +111,13 @@ impl PostgresSessionStorage {
         exec!(
             "ALTER TABLE torrents ADD COLUMN IF NOT EXISTS first_last_pieces_first BOOLEAN NOT NULL DEFAULT FALSE"
         );
+        exec!("ALTER TABLE torrents ADD COLUMN IF NOT EXISTS file_priorities SMALLINT[]");
+        exec!(
+            "ALTER TABLE torrents ADD COLUMN IF NOT EXISTS piece_priority_pieces BIGINT[] NOT NULL DEFAULT '{}'"
+        );
+        exec!(
+            "ALTER TABLE torrents ADD COLUMN IF NOT EXISTS piece_priority_levels SMALLINT[] NOT NULL DEFAULT '{}'"
+        );
 
         Ok(Self { pool })
     }
@@ -114,10 +140,11 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             .as_ref()
             .map(|i| i.torrent_bytes.clone())
             .unwrap_or_default();
-        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused, sequential, first_last_pieces_first)
-        VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused, sequential, first_last_pieces_first, file_priorities, piece_priority_pieces, piece_priority_levels)
+        VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT(id) DO NOTHING";
         let piece_picking = torrent.piece_picking();
+        let (pieces, levels) = piece_priority_columns(torrent);
         sqlx::query(q)
             .bind::<i32>(id.try_into()?)
             .bind(&torrent.info_hash().0[..])
@@ -147,6 +174,9 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             .bind(torrent.is_paused())
             .bind(piece_picking.sequential)
             .bind(piece_picking.first_last_pieces_first)
+            .bind(file_priority_column(torrent))
+            .bind(pieces)
+            .bind(levels)
             .execute(&self.pool)
             .await
             .context("error executing INSERT INTO torrents")?;
@@ -179,8 +209,9 @@ impl SessionPersistenceStore for PostgresSessionStorage {
         torrent: &ManagedTorrentHandle,
     ) -> anyhow::Result<()> {
         let piece_picking = torrent.piece_picking();
+        let (pieces, levels) = piece_priority_columns(torrent);
         sqlx::query(
-            "UPDATE torrents SET only_files = $1, is_paused = $2, sequential = $3, first_last_pieces_first = $4 WHERE id = $5",
+            "UPDATE torrents SET only_files = $1, is_paused = $2, sequential = $3, first_last_pieces_first = $4, file_priorities = $5, piece_priority_pieces = $6, piece_priority_levels = $7 WHERE id = $8",
         )
         .bind(torrent.only_files().map(|v| {
             v.into_iter()
@@ -190,6 +221,9 @@ impl SessionPersistenceStore for PostgresSessionStorage {
         .bind(torrent.is_paused())
         .bind(piece_picking.sequential)
         .bind(piece_picking.first_last_pieces_first)
+        .bind(file_priority_column(torrent))
+        .bind(pieces)
+        .bind(levels)
         .bind::<i32>(id.try_into()?)
             .execute(&self.pool)
             .await
@@ -209,6 +243,22 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             .map(Ok);
         Ok(futures::stream::iter(torrents).boxed())
     }
+}
+
+fn file_priority_column(torrent: &ManagedTorrentHandle) -> Vec<i16> {
+    torrent
+        .file_priorities()
+        .into_iter()
+        .map(i16::from)
+        .collect()
+}
+
+fn piece_priority_columns(torrent: &ManagedTorrentHandle) -> (Vec<i64>, Vec<i16>) {
+    torrent
+        .piece_priority_overrides()
+        .into_iter()
+        .map(|(piece, level)| (i64::from(piece), i16::from(level)))
+        .unzip()
 }
 
 struct PgBitfield {

@@ -16,8 +16,9 @@ use crate::{
     api::TorrentIdOrHash,
     bitv::BitV,
     bitv_factory::BitVFactory,
-    chunk_tracker::{ChunkTracker, compute_selected_pieces},
+    chunk_tracker::ChunkTracker,
     file_ops::FileOps,
+    priority::Priorities,
     type_aliases::{BF, FileStorage},
 };
 
@@ -29,7 +30,9 @@ pub struct TorrentStateInitializing {
     pub(crate) files: FileStorage,
     pub(crate) shared: Arc<ManagedTorrentShared>,
     pub(crate) metadata: Arc<TorrentMetadata>,
-    pub(crate) only_files: Option<Vec<usize>>,
+    // The priorities when the check started. The torrent applies its current ones when the
+    // check finishes, so changes made meanwhile are not lost.
+    pub(crate) priorities: Priorities,
     pub(crate) checked_bytes: AtomicU64,
     pause_requested: AtomicBool,
     check_running: AtomicBool,
@@ -37,17 +40,17 @@ pub struct TorrentStateInitializing {
 }
 
 impl TorrentStateInitializing {
-    pub fn new(
+    pub(crate) fn new(
         shared: Arc<ManagedTorrentShared>,
         metadata: Arc<TorrentMetadata>,
-        only_files: Option<Vec<usize>>,
+        priorities: Priorities,
         files: FileStorage,
         previously_errored: bool,
     ) -> Self {
         Self {
             shared,
             metadata,
-            only_files,
+            priorities,
             files,
             checked_bytes: AtomicU64::new(0),
             pause_requested: AtomicBool::new(false),
@@ -228,20 +231,12 @@ impl TorrentStateInitializing {
             }
         };
 
-        let selected_pieces = compute_selected_pieces(
-            self.metadata.lengths(),
-            |idx| {
-                self.only_files
-                    .as_ref()
-                    .map(|o| o.contains(&idx))
-                    .unwrap_or(true)
-            },
-            &self.metadata.file_infos,
-        );
-
+        let levels = self
+            .priorities
+            .piece_levels(self.metadata.lengths(), &self.metadata.file_infos);
         let chunk_tracker = ChunkTracker::new(
             have_pieces.into_dyn(),
-            selected_pieces,
+            levels,
             *self.metadata.lengths(),
             &self.metadata.file_infos,
         )
@@ -261,13 +256,14 @@ impl TorrentStateInitializing {
         self.shared
             .spawner
             .block_in_place_with_semaphore(|| {
-                for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
-                    if self
-                        .only_files
-                        .as_ref()
-                        .map(|v| v.contains(&idx))
-                        .unwrap_or(true)
-                    {
+                for (idx, (fi, level)) in self
+                    .metadata
+                    .file_infos
+                    .iter()
+                    .zip(self.priorities.files().iter().copied())
+                    .enumerate()
+                {
+                    if level > 0 {
                         let now = Instant::now();
                         if fi.attrs.padding {
                             continue;

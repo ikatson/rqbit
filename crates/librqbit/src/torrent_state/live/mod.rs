@@ -93,6 +93,7 @@ use crate::{
     },
     piece_picker::{PieceAvailability, PiecePicker, PiecePicking},
     piece_tracker::{AcquireRequest, AcquireResult, PieceTracker},
+    priority::PieceLevels,
     session::CheckedIncomingConnection,
     session_stats::SessionStats,
     stream_connect::ConnectionKind,
@@ -226,10 +227,12 @@ impl TorrentStateLive {
             .max(1)
     }
 
+    /// `file_levels` is the priority of every file, for the picker; the levels of the pieces
+    /// come with `paused`'s chunk tracker.
     pub(crate) fn new(
         paused: TorrentStatePaused,
         piece_picking: PiecePicking,
-        only_files: Option<&HashSet<usize>>,
+        file_levels: &[u8],
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<Arc<Self>> {
@@ -250,7 +253,7 @@ impl TorrentStateLive {
             piece_picking,
             lengths,
             &paused.metadata.file_infos,
-            only_files,
+            file_levels,
         );
 
         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
@@ -806,20 +809,46 @@ impl TorrentStateLive {
         Err(res)
     }
 
-    pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let hns = {
-            let mut g = self.lock_write("update_only_files");
-            let hns = g
-                .get_pieces_mut()?
-                .update_only_files(&self.metadata.file_infos, only_files)?;
+    /// Changes the priorities: `levels` is the new effective level of every piece and
+    /// `file_levels` the level of every file.
+    ///
+    /// Takes effect from the next piece reservation on. Pieces in flight whose level drops to 0
+    /// are given up: their requests are cancelled at the peers downloading them. Data on disk
+    /// stays.
+    pub(crate) fn set_priorities(
+        &self,
+        levels: PieceLevels,
+        file_levels: &[u8],
+    ) -> anyhow::Result<()> {
+        let (hns, released) = {
+            let mut g = self.lock_write("set_priorities");
+            let (hns, released) = g.get_pieces_mut()?.set_piece_levels(levels)?;
             g.picker
-                .update_only_files(&self.metadata.file_infos, Some(only_files));
-            hns
+                .update_files(&self.metadata.file_infos, file_levels);
+            (hns, released)
         };
         // With the state lock released. A dying peer holds its shard of the peer table
         // while it asks whether the torrent is finished (on_peer_died), so touching the
         // table under the state lock is the reverse order, and the two deadlock.
-        if !hns.finished() {
+        for (piece, peer) in released {
+            trace!(
+                piece = piece.get(),
+                ?peer,
+                "piece no longer wanted, cancelling its requests"
+            );
+            self.peers
+                .with_live_mut(peer, "cancel_unwanted_piece", |live| {
+                    live.cancel_inflight_requests_for_piece(piece)
+                });
+        }
+        // Peers waiting for something to request look at the queue again.
+        self.new_pieces_notify.notify_waiters();
+        if hns.finished() {
+            self.finished_notify.notify_waiters();
+            if !self.has_active_streams_unfinished_files(&self.lock_read("set_priorities")) {
+                self.disconnect_all_peers_that_have_full_torrent();
+            }
+        } else {
             self.reconnect_all_not_needed_peers();
         }
         Ok(())

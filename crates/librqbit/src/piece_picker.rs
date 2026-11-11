@@ -16,7 +16,7 @@
 //! after this; this module only orders the queue.
 
 use std::{
-    collections::HashSet,
+    cmp::Reverse,
     ops::Range,
     sync::atomic::{AtomicU32, Ordering},
 };
@@ -25,7 +25,10 @@ use librqbit_core::lengths::Lengths;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
-use crate::type_aliases::{BF, BS, FileInfos};
+use crate::{
+    priority::PieceLevels,
+    type_aliases::{BF, BS, FileInfos},
+};
 
 /// How a torrent orders the pieces it downloads.
 ///
@@ -129,17 +132,21 @@ impl PieceAvailability {
     }
 }
 
-struct SelectedFile {
+struct OrderedFile {
     pieces: Range<usize>,
     len: u64,
+    // Level above 0. Only these get first and last pieces first; the others can still have
+    // pieces queued through a piece override, so sequential mode walks them too.
+    wanted: bool,
 }
 
-/// Picks the next piece for a peer, per the torrent's [`PiecePicking`] and selected files.
+/// Picks the next piece for a peer, per the torrent's [`PiecePicking`] and the priority levels
+/// of its files and pieces.
 pub(crate) struct PiecePicker {
     options: PiecePicking,
     lengths: Lengths,
-    // Selected, non-padding files sorted by name: the order sequential mode downloads them in.
-    files: Vec<SelectedFile>,
+    // Non-padding files sorted by name: the order sequential mode downloads them in.
+    files: Vec<OrderedFile>,
     // The pieces "first and last pieces first" puts ahead of the rest. None when it's off.
     edge_pieces: Option<BF>,
     // Breaks availability ties. Differs per torrent start, so clients don't all agree on an order.
@@ -154,12 +161,12 @@ fn mix(mut x: u64) -> u64 {
 }
 
 impl PiecePicker {
-    /// `only_files` None means every file is selected.
+    /// `file_levels` is the priority of every file; files at 0 are not downloaded.
     pub fn new(
         options: PiecePicking,
         lengths: Lengths,
         file_infos: &FileInfos,
-        only_files: Option<&HashSet<usize>>,
+        file_levels: &[u8],
     ) -> Self {
         let mut picker = Self {
             options,
@@ -168,7 +175,7 @@ impl PiecePicker {
             edge_pieces: None,
             salt: rand::rng().random(),
         };
-        picker.update_only_files(file_infos, only_files);
+        picker.update_files(file_infos, file_levels);
         picker
     }
 
@@ -177,24 +184,22 @@ impl PiecePicker {
         self.edge_pieces = self.compute_edge_pieces();
     }
 
-    pub fn update_only_files(
-        &mut self,
-        file_infos: &FileInfos,
-        only_files: Option<&HashSet<usize>>,
-    ) {
-        let mut selected: Vec<(usize, &crate::file_info::FileInfo)> = file_infos
+    /// Follows a change of the files' priorities.
+    pub fn update_files(&mut self, file_infos: &FileInfos, file_levels: &[u8]) {
+        let mut files: Vec<(&crate::file_info::FileInfo, bool)> = file_infos
             .iter()
             .enumerate()
             .filter(|(_, fi)| !fi.attrs.padding)
-            .filter(|(id, _)| only_files.is_none_or(|o| o.contains(id)))
+            .map(|(id, fi)| (fi, file_levels.get(id).is_some_and(|l| *l > 0)))
             .collect();
         // By name, as many torrents list their files in no particular order.
-        selected.sort_by(|a, b| a.1.relative_filename.cmp(&b.1.relative_filename));
-        self.files = selected
+        files.sort_by(|a, b| a.0.relative_filename.cmp(&b.0.relative_filename));
+        self.files = files
             .into_iter()
-            .map(|(_, fi)| SelectedFile {
+            .map(|(fi, wanted)| OrderedFile {
                 pieces: fi.piece_range_usize(),
                 len: fi.len,
+                wanted,
             })
             .collect();
         self.edge_pieces = self.compute_edge_pieces();
@@ -209,7 +214,7 @@ impl PiecePicker {
         // qBittorrent: ceil(file size * 1% / piece length) at each end. The 1% covers an AVI
         // index at the end of the file in the worst case.
         let per_end = u64::from(self.lengths.default_piece_length()).saturating_mul(100);
-        for f in &self.files {
+        for f in self.files.iter().filter(|f| f.wanted) {
             let n = usize::try_from(f.len.div_ceil(per_end))
                 .unwrap_or(usize::MAX)
                 .min(f.pieces.len());
@@ -225,43 +230,68 @@ impl PiecePicker {
     }
 
     /// The next piece to ask this peer for, out of `queue` (queued: selected, not had, not in
-    /// flight). `have_bytes` is how much of the torrent is verified.
+    /// flight). `levels` is the priority of every piece: a higher level always goes first, and
+    /// the options above order the pieces inside one level. `have_bytes` is how much of the
+    /// torrent is verified.
     pub fn pick(
         &self,
         queue: &BS,
+        levels: &PieceLevels,
         have_bytes: u64,
         availability: &PieceAvailability,
         peer_has_piece: impl Fn(usize) -> bool,
     ) -> Option<usize> {
-        let wanted = |p: usize| queue.get(p).is_some_and(|b| *b) && peer_has_piece(p);
+        // No piece is above `top`: a candidate there can't be beaten, so the walks stop at the
+        // first one. With a single level (the common case) that makes every walk below exactly
+        // as long as it is without priorities.
+        let top = levels.top();
+        // The best candidate so far. Each step only takes a piece whose level is above it (level
+        // 0 is never taken), so a piece found earlier wins inside its level.
+        let mut best: Option<(u8, usize)> = None;
+        let floor = |best: Option<(u8, usize)>| best.map_or(0, |(level, _)| level);
 
         // libtorrent's top priority disregards availability, and these are few: lowest index wins.
-        if let Some(edge) = &self.edge_pieces
-            && let Some(p) = edge.iter_ones().find(|p| wanted(*p))
-        {
-            return Some(p);
+        if let Some(edge) = &self.edge_pieces {
+            for p in edge.iter_ones() {
+                let level = levels.get(p);
+                if level > floor(best) && queue.get(p).is_some_and(|b| *b) && peer_has_piece(p) {
+                    if level >= top {
+                        return Some(p);
+                    }
+                    best = Some((level, p));
+                }
+            }
         }
 
         if self.options.sequential {
-            return self.files.iter().find_map(|f| {
-                let start = f.pieces.start;
-                queue
-                    .get(f.pieces.clone())?
-                    .iter_ones()
-                    .map(|i| start + i)
-                    .find(|p| peer_has_piece(*p))
-            });
+            for f in &self.files {
+                let Some(bits) = queue.get(f.pieces.clone()) else {
+                    continue;
+                };
+                for p in bits.iter_ones().map(|i| f.pieces.start + i) {
+                    let level = levels.get(p);
+                    if level > floor(best) && peer_has_piece(p) {
+                        if level >= top {
+                            return Some(p);
+                        }
+                        best = Some((level, p));
+                    }
+                }
+            }
+            return best.map(|(_, p)| p);
         }
 
         let random =
             have_bytes < INITIAL_RANDOM_PIECES * u64::from(self.lengths.default_piece_length());
+        let floor = floor(best);
         queue
             .iter_ones()
-            .filter(|p| peer_has_piece(*p))
+            .filter(|p| levels.get(*p) > floor && peer_has_piece(*p))
             .min_by_key(|p| {
                 let rarity = if random { 0 } else { availability.get(*p) };
-                (rarity, mix(self.salt ^ *p as u64))
+                (Reverse(levels.get(*p)), rarity, mix(self.salt ^ *p as u64))
             })
+            .or(best.map(|(_, p)| p))
     }
 }
 
@@ -274,6 +304,7 @@ mod tests {
     use super::{PieceAvailability, PiecePicker, PiecePicking};
     use crate::{
         file_info::FileInfo,
+        priority::{PieceLevels, Priorities},
         type_aliases::{BF, FileInfos},
     };
 
@@ -306,10 +337,37 @@ mod tests {
         u64::from(pieces) * u64::from(PIECE)
     }
 
+    // Every piece normal.
+    fn flat(pieces: u32) -> PieceLevels {
+        PieceLevels::new(vec![1u8; pieces as usize].into_boxed_slice())
+    }
+
+    fn normal_files(files: &FileInfos) -> Vec<u8> {
+        vec![1; files.len()]
+    }
+
+    // The effective piece levels of files at `file_levels` with `overrides`.
+    fn levels(
+        files: &FileInfos,
+        pieces: u32,
+        file_levels: &[u8],
+        overrides: &[(u32, u8)],
+    ) -> PieceLevels {
+        Priorities::from_options(files, pieces, None, Some(file_levels), Some(overrides))
+            .unwrap()
+            .piece_levels(&lengths(pieces), files)
+    }
+
     #[test]
     fn rarest_piece_the_peer_has_wins() {
         let files: FileInfos = vec![file("a", 0, 8)];
-        let picker = PiecePicker::new(PiecePicking::default(), lengths(8), &files, None);
+        let picker = PiecePicker::new(
+            PiecePicking::default(),
+            lengths(8),
+            &files,
+            &normal_files(&files),
+        );
+        let lv = flat(8);
         let avail = PieceAvailability::new(8);
         for p in 0..8 {
             for _ in 0..(10 - p) {
@@ -318,13 +376,22 @@ mod tests {
         }
         let queue = all_queued(8);
         // Piece 7 is the rarest overall.
-        assert_eq!(picker.pick(&queue, settled(8), &avail, |_| true), Some(7));
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            Some(7)
+        );
         // The peer doesn't have 7 or 6: 5 is the rarest it has.
-        assert_eq!(picker.pick(&queue, settled(8), &avail, |p| p < 6), Some(5));
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(8), &avail, |p| p < 6),
+            Some(5)
+        );
         // Not queued (in flight / had) pieces are skipped.
         let mut queue = queue;
         queue.set(7, false);
-        assert_eq!(picker.pick(&queue, settled(8), &avail, |_| true), Some(6));
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            Some(6)
+        );
     }
 
     #[test]
@@ -344,14 +411,16 @@ mod tests {
         let files: FileInfos = vec![file("a", 0, 64)];
         let avail = PieceAvailability::new(64);
         let queue = all_queued(64);
+        let lv = flat(64);
         let firsts: HashSet<usize> = (0..32)
             .filter_map(|_| {
-                PiecePicker::new(PiecePicking::default(), lengths(64), &files, None).pick(
-                    &queue,
-                    settled(64),
-                    &avail,
-                    |_| true,
+                PiecePicker::new(
+                    PiecePicking::default(),
+                    lengths(64),
+                    &files,
+                    &normal_files(&files),
                 )
+                .pick(&queue, &lv, settled(64), &avail, |_| true)
             })
             .collect();
         assert!(firsts.len() > 1, "every picker started on the same piece");
@@ -368,19 +437,29 @@ mod tests {
             }
         }
         let queue = all_queued(64);
+        let lv = flat(64);
         let picked: HashSet<usize> = (0..32)
             .filter_map(|_| {
-                PiecePicker::new(PiecePicking::default(), lengths(64), &files, None).pick(
-                    &queue,
-                    0,
-                    &avail,
-                    |_| true,
+                PiecePicker::new(
+                    PiecePicking::default(),
+                    lengths(64),
+                    &files,
+                    &normal_files(&files),
                 )
+                .pick(&queue, &lv, 0, &avail, |_| true)
             })
             .collect();
         assert!(picked.len() > 1, "initial picks followed availability");
-        let picker = PiecePicker::new(PiecePicking::default(), lengths(64), &files, None);
-        assert_eq!(picker.pick(&queue, settled(64), &avail, |_| true), Some(10));
+        let picker = PiecePicker::new(
+            PiecePicking::default(),
+            lengths(64),
+            &files,
+            &normal_files(&files),
+        );
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(64), &avail, |_| true),
+            Some(10)
+        );
     }
 
     #[test]
@@ -391,15 +470,28 @@ mod tests {
             sequential: true,
             ..Default::default()
         };
-        let picker = PiecePicker::new(picking, lengths(8), &files, None);
+        let picker = PiecePicker::new(picking, lengths(8), &files, &normal_files(&files));
+        let lv = flat(8);
         let avail = PieceAvailability::new(8);
         let mut queue = all_queued(8);
-        assert_eq!(picker.pick(&queue, settled(8), &avail, |_| true), Some(4));
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            Some(4)
+        );
         queue.set(4, false);
-        assert_eq!(picker.pick(&queue, settled(8), &avail, |_| true), Some(5));
-        assert_eq!(picker.pick(&queue, settled(8), &avail, |p| p < 4), Some(0));
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            Some(5)
+        );
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(8), &avail, |p| p < 4),
+            Some(0)
+        );
         queue[4..8].fill(false);
-        assert_eq!(picker.pick(&queue, settled(8), &avail, |_| true), Some(0));
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            Some(0)
+        );
     }
 
     #[test]
@@ -409,14 +501,19 @@ mod tests {
             sequential: true,
             first_last_pieces_first: true,
         };
-        let only: HashSet<usize> = [1].into();
-        let picker = PiecePicker::new(picking, lengths(8), &files, Some(&only));
+        let picker = PiecePicker::new(picking, lengths(8), &files, &[0, 1]);
+        let lv = levels(&files, 8, &[0, 1], &[]);
         let avail = PieceAvailability::new(8);
-        // Even if the queue still holds a piece of "a" (shared boundary pieces do), it's not
-        // an edge piece and not walked.
+        // Even if the queue still holds a piece of "a", a level 0 piece is never picked.
         let queue = all_queued(8);
-        assert_eq!(picker.pick(&queue, settled(8), &avail, |_| true), Some(4));
-        assert_eq!(picker.pick(&queue, settled(8), &avail, |p| p < 4), None);
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            Some(4)
+        );
+        assert_eq!(
+            picker.pick(&queue, &lv, settled(8), &avail, |p| p < 4),
+            None
+        );
     }
 
     #[test]
@@ -427,7 +524,8 @@ mod tests {
             first_last_pieces_first: true,
             ..Default::default()
         };
-        let picker = PiecePicker::new(picking, lengths(250), &files, None);
+        let picker = PiecePicker::new(picking, lengths(250), &files, &normal_files(&files));
+        let lv = flat(250);
         let avail = PieceAvailability::new(250);
         // The middle is rarer, yet the ends go first.
         for p in [0, 1, 2, 247, 248, 249] {
@@ -435,7 +533,7 @@ mod tests {
         }
         let mut queue = all_queued(250);
         let mut order = Vec::new();
-        while let Some(p) = picker.pick(&queue, settled(250), &avail, |_| true) {
+        while let Some(p) = picker.pick(&queue, &lv, settled(250), &avail, |_| true) {
             if order.len() == 6 {
                 break;
             }
@@ -444,14 +542,21 @@ mod tests {
         }
         assert_eq!(order, vec![0, 1, 2, 247, 248, 249]);
         // Then back to rarest first, i.e. not piece 3 just because it's next.
-        let next = picker.pick(&queue, settled(250), &avail, |_| true).unwrap();
+        let next = picker
+            .pick(&queue, &lv, settled(250), &avail, |_| true)
+            .unwrap();
         assert!((3..247).contains(&next));
     }
 
     #[test]
     fn small_files_get_at_least_one_edge_piece() {
         let files: FileInfos = vec![file("a", 0, 1), file("b", 1, 10)];
-        let mut picker = PiecePicker::new(PiecePicking::default(), lengths(11), &files, None);
+        let mut picker = PiecePicker::new(
+            PiecePicking::default(),
+            lengths(11),
+            &files,
+            &normal_files(&files),
+        );
         picker.set_options(PiecePicking {
             first_last_pieces_first: true,
             ..Default::default()
@@ -460,5 +565,182 @@ mod tests {
         assert_eq!(edge.iter_ones().collect::<Vec<_>>(), vec![0, 1, 10]);
         picker.set_options(PiecePicking::default());
         assert!(picker.compute_edge_pieces().is_none());
+    }
+
+    // Drains the picker: the order every queued piece the peer has is picked in.
+    fn drain(
+        picker: &PiecePicker,
+        pieces: u32,
+        lv: &PieceLevels,
+        avail: &PieceAvailability,
+    ) -> Vec<usize> {
+        let mut queue = all_queued(pieces);
+        let mut order = Vec::new();
+        while let Some(p) = picker.pick(&queue, lv, settled(pieces), avail, |_| true) {
+            order.push(p);
+            queue.set(p, false);
+        }
+        order
+    }
+
+    fn level_of(lv: &PieceLevels, order: &[usize]) -> Vec<u8> {
+        order.iter().map(|p| lv.get(*p)).collect()
+    }
+
+    #[test]
+    fn higher_levels_go_first_in_every_mode() {
+        // "a" (pieces 0..4) normal, "b" (4..8) high, "c" (8..12) maximum. By name "a" is walked
+        // first in sequential mode and its pieces are the rarest, yet "c" then "b" go first.
+        let files: FileInfos = vec![file("a", 0, 4), file("b", 4, 4), file("c", 8, 4)];
+        let lv = levels(&files, 12, &[1, 6, 7], &[]);
+        let avail = PieceAvailability::new(12);
+        for p in 4..12 {
+            avail.add_piece(p);
+        }
+        for sequential in [false, true] {
+            for first_last_pieces_first in [false, true] {
+                let picking = PiecePicking {
+                    sequential,
+                    first_last_pieces_first,
+                };
+                let picker = PiecePicker::new(picking, lengths(12), &files, &[1, 6, 7]);
+                let order = drain(&picker, 12, &lv, &avail);
+                assert_eq!(
+                    level_of(&lv, &order),
+                    [[7; 4], [6; 4], [1; 4]].concat(),
+                    "{picking:?}: {order:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn order_inside_a_level_is_unchanged() {
+        // "b" (pieces 0..8) at maximum, "a" (8..12) normal: inside the maximum level the mode
+        // orders the pieces as it does without priorities.
+        let files: FileInfos = vec![file("b", 0, 8), file("a", 8, 4)];
+        let lv = levels(&files, 12, &[7, 1], &[]);
+        let avail = PieceAvailability::new(12);
+        // Inside "b", piece 5 is the rarest, then 6, then the rest.
+        for p in 0..12 {
+            let copies = match p {
+                5 => 1,
+                6 => 2,
+                _ => 3,
+            };
+            for _ in 0..copies {
+                avail.add_piece(p);
+            }
+        }
+
+        let rarest = PiecePicker::new(PiecePicking::default(), lengths(12), &files, &[7, 1]);
+        let order = drain(&rarest, 12, &lv, &avail);
+        assert_eq!(&order[..2], &[5, 6]);
+        assert!(order[..8].iter().all(|p| *p < 8), "{order:?}");
+
+        let sequential = PiecePicker::new(
+            PiecePicking {
+                sequential: true,
+                ..Default::default()
+            },
+            lengths(12),
+            &files,
+            &[7, 1],
+        );
+        assert_eq!(
+            drain(&sequential, 12, &lv, &avail),
+            vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        );
+
+        // 8 pieces: one edge piece at each end of "b", then rarest first; the edge pieces of
+        // "a" are normal, so they wait for the maximum level to be done.
+        let edges = PiecePicker::new(
+            PiecePicking {
+                first_last_pieces_first: true,
+                ..Default::default()
+            },
+            lengths(12),
+            &files,
+            &[7, 1],
+        );
+        let order = drain(&edges, 12, &lv, &avail);
+        assert_eq!(&order[..4], &[0, 7, 5, 6]);
+        assert_eq!(&order[8..10], &[8, 11]);
+    }
+
+    #[test]
+    fn piece_override_beats_the_file_level() {
+        let files: FileInfos = vec![file("a", 0, 8)];
+        // Piece 6 raised above its file, piece 2 skipped although its file is wanted.
+        let lv = levels(&files, 8, &[1], &[(6, 7), (2, 0)]);
+        let picker = PiecePicker::new(
+            PiecePicking {
+                sequential: true,
+                ..Default::default()
+            },
+            lengths(8),
+            &files,
+            &[1],
+        );
+        let avail = PieceAvailability::new(8);
+        assert_eq!(drain(&picker, 8, &lv, &avail), vec![6, 0, 1, 3, 4, 5, 7]);
+    }
+
+    #[test]
+    fn a_piece_overridden_up_in_a_skipped_file_is_picked() {
+        let files: FileInfos = vec![file("a", 0, 4), file("b", 4, 4)];
+        let lv = levels(&files, 8, &[0, 1], &[(1, 1)]);
+        for sequential in [false, true] {
+            let picker = PiecePicker::new(
+                PiecePicking {
+                    sequential,
+                    first_last_pieces_first: true,
+                },
+                lengths(8),
+                &files,
+                &[0, 1],
+            );
+            let avail = PieceAvailability::new(8);
+            let mut order = drain(&picker, 8, &lv, &avail);
+            order.sort_unstable();
+            assert_eq!(order, vec![1, 4, 5, 6, 7]);
+        }
+    }
+
+    #[test]
+    fn level_zero_is_never_picked() {
+        let files: FileInfos = vec![file("a", 0, 8)];
+        let lv = PieceLevels::new(vec![0u8; 8].into_boxed_slice());
+        for sequential in [false, true] {
+            for first_last_pieces_first in [false, true] {
+                let picker = PiecePicker::new(
+                    PiecePicking {
+                        sequential,
+                        first_last_pieces_first,
+                    },
+                    lengths(8),
+                    &files,
+                    &[1],
+                );
+                let avail = PieceAvailability::new(8);
+                // The queue says every piece is wanted; the levels say none is.
+                assert_eq!(
+                    picker.pick(&all_queued(8), &lv, settled(8), &avail, |_| true),
+                    None
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_lower_level_is_picked_when_the_peer_lacks_the_higher_ones() {
+        let files: FileInfos = vec![file("a", 0, 4), file("b", 4, 4)];
+        let lv = levels(&files, 8, &[1, 7], &[]);
+        let picker = PiecePicker::new(PiecePicking::default(), lengths(8), &files, &[1, 7]);
+        let avail = PieceAvailability::new(8);
+        let p = picker
+            .pick(&all_queued(8), &lv, settled(8), &avail, |p| p < 4)
+            .unwrap();
+        assert!(p < 4);
     }
 }
