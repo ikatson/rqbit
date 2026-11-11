@@ -6,6 +6,7 @@
 
 use std::fmt;
 
+use serde::Serializer;
 use serde::de::{Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 
 /// The most web seeds kept for one torrent. Anything beyond is ignored.
@@ -104,6 +105,18 @@ where
     D: Deserializer<'de>,
 {
     deserializer.deserialize_any(UrlListVisitor)
+}
+
+/// Serializes `url-list` like libtorrent writes it: a single string when there
+/// is exactly one web seed, a list of strings otherwise.
+pub fn serialize_url_list<S>(list: &[String], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match list {
+        [url] => serializer.serialize_str(url),
+        list => serializer.collect_seq(list),
+    }
 }
 
 struct UrlListVisitor;

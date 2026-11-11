@@ -87,7 +87,10 @@ pub use error::{Error, Result};
 
 pub use api::Api;
 pub use api_error::{ApiError, WithStatus, WithStatusError};
-pub use create_torrent_file::{CreateTorrentOptions, CreateTorrentResult, create_torrent};
+pub use create_torrent_file::{
+    CreateTorrentCancelled, CreateTorrentOptions, CreateTorrentProgress,
+    CreateTorrentProgressCallback, CreateTorrentResult, auto_piece_length, create_torrent,
+};
 pub use dht;
 pub use librqbit_core::spawn_utils::spawn as librqbit_spawn;
 pub use listen::{ListenerMode, ListenerOptions};

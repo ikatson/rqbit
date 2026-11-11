@@ -15,12 +15,13 @@ use super::test_util::create_default_random_dir_with_torrents;
 
 async fn e2e_stream() -> anyhow::Result<()> {
     setup_test_logging();
-    let files = create_default_random_dir_with_torrents(1, 8192, Some("test_e2e_stream"));
+    // Eight pieces of the smallest piece length torrents can have.
+    let files = create_default_random_dir_with_torrents(1, 8 * 16384, Some("test_e2e_stream"));
     let torrent = create_torrent(
         files.path(),
         CreateTorrentOptions {
             name: None,
-            piece_length: Some(1024),
+            piece_length: Some(16384),
             ..Default::default()
         },
         &BlockingSpawner::new(1),
@@ -105,7 +106,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
     info!("client torrent initialized, starting stream");
 
     let mut stream = client_handle.stream(0).await?;
-    let mut buf = Vec::<u8>::with_capacity(8192);
+    let mut buf = Vec::<u8>::with_capacity(orig_content.len());
     stream.read_to_end(&mut buf).await?;
 
     if buf != orig_content {

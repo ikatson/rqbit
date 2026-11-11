@@ -105,10 +105,12 @@ pub struct TorrentMetaV1<BufType> {
     /// content. A string or a list of strings in the file; entries that are
     /// not usable `http` / `https` URLs are dropped, duplicates removed and the
     /// count bounded (see [`crate::web_seed`]). BEP 17 `httpseeds` is ignored.
+    /// Written like libtorrent does: a string for one URL, a list otherwise.
     #[serde(
         rename = "url-list",
         default,
         deserialize_with = "crate::web_seed::deserialize_url_list",
+        serialize_with = "crate::web_seed::serialize_url_list",
         skip_serializing_if = "Vec::is_empty"
     )]
     pub url_list: Vec<String>,
@@ -224,6 +226,16 @@ pub struct TorrentMetaV1Info<BufType> {
 
     #[serde(skip_serializing_if = "is_false", default)]
     pub private: bool,
+
+    /// `source`: a string, usually the name of a private tracker, that makes
+    /// the info hash differ from the one of a torrent with the same content
+    /// created for another site. A value that is not a string reads as absent.
+    #[serde(
+        default = "none",
+        deserialize_with = "deserialize_optional_bytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source: Option<BufType>,
 
     /// BEP 52 `meta version`: 2 for v2 and hybrid torrents.
     #[serde(
@@ -986,6 +998,76 @@ const fn none<T>() -> Option<T> {
     None
 }
 
+/// Deserializes an optional byte string. A value of another type (integer,
+/// list, dictionary) reads as absent instead of failing, so that an odd value
+/// in an optional key never makes a torrent unreadable.
+fn deserialize_optional_bytes<'de, D, BufType>(deserializer: D) -> Result<Option<BufType>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    BufType: serde::Deserialize<'de>,
+{
+    use serde::de::{
+        IgnoredAny, MapAccess, SeqAccess, Visitor,
+        value::{BorrowedBytesDeserializer, BytesDeserializer},
+    };
+
+    struct BytesOrNothing<B>(std::marker::PhantomData<B>);
+
+    impl<'de, B: serde::Deserialize<'de>> Visitor<'de> for BytesOrNothing<B> {
+        type Value = Option<B>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a byte string")
+        }
+
+        fn visit_borrowed_bytes<E: serde::de::Error>(
+            self,
+            v: &'de [u8],
+        ) -> Result<Self::Value, E> {
+            B::deserialize(BorrowedBytesDeserializer::<E>::new(v)).map(Some)
+        }
+
+        fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+            B::deserialize(BytesDeserializer::<E>::new(v)).map(Some)
+        }
+
+        fn visit_borrowed_str<E: serde::de::Error>(
+            self,
+            v: &'de str,
+        ) -> Result<Self::Value, E> {
+            self.visit_borrowed_bytes(v.as_bytes())
+        }
+
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            self.visit_bytes(v.as_bytes())
+        }
+
+        fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            while seq.next_element::<IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(BytesOrNothing(std::marker::PhantomData))
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct TorrentMetaV1File<BufType> {
     pub length: u64,
@@ -1049,6 +1131,7 @@ where
             symlink_path: self.symlink_path.clone_to_owned(within_buffer),
             private: self.private,
             meta_version: self.meta_version,
+            source: self.source.clone_to_owned(within_buffer),
             file_tree: self.file_tree.clone_to_owned(within_buffer),
         }
     }
