@@ -53,6 +53,8 @@ struct ClientSetup {
     /// The trackers of the torrent.
     trackers: Vec<String>,
     dht: Option<DhtSessionConfig>,
+    /// Add the torrent as a magnet link, so the metadata comes from the seeder too.
+    magnet: bool,
 }
 
 impl ClientSetup {
@@ -65,6 +67,7 @@ impl ClientSetup {
             listen: None,
             trackers: Vec::new(),
             dht: None,
+            magnet: false,
         }
     }
 }
@@ -190,7 +193,14 @@ async fn start_client(seed: &Fixture, setup: ClientSetup) -> anyhow::Result<Fixt
     .context("error creating client session")?;
     let handle = session
         .add_torrent(
-            AddTorrent::from_bytes(seed.torrent_bytes.clone()),
+            if setup.magnet {
+                AddTorrent::from_url(format!(
+                    "magnet:?xt=urn:btih:{}",
+                    seed.info_hash.as_string()
+                ))
+            } else {
+                AddTorrent::from_bytes(seed.torrent_bytes.clone())
+            },
             Some(AddTorrentOptions {
                 paused: false,
                 initial_peers: Some(vec![seed.addr()]),
@@ -434,6 +444,157 @@ async fn test_refusing_proxy_is_not_bypassed() -> anyhow::Result<()> {
     .await
 }
 
+/// HTTP trackers go through every kind of proxy, whatever the shape of the proxy host (an IP
+/// address of either family or a host name), with credentials that hold a `%`: the tracker
+/// only ever sees the proxy, and the proxy accepts the credentials.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_http_tracker_only_through_the_proxy() -> anyhow::Result<()> {
+    run(async {
+        let remote_dns = |kind| FakeProxyOptions {
+            remote_dns: true,
+            ..FakeProxyOptions::new(kind)
+        };
+        // (proxy, host name to use in the URL instead of its IP address)
+        let mut cases = vec![
+            (FakeProxyOptions::new(FakeProxyKind::Socks5), None),
+            (
+                FakeProxyOptions {
+                    remote_dns: true,
+                    ..with_credentials(FakeProxyKind::Socks5, "us%er", "p%41ss/:@")
+                },
+                Some("localhost"),
+            ),
+            // reqwest can't send a SOCKS4 user id, so HTTP requests only work through a SOCKS4
+            // proxy that doesn't ask for one.
+            (FakeProxyOptions::new(FakeProxyKind::Socks4), None),
+            (remote_dns(FakeProxyKind::Socks4), Some("localhost")),
+            (
+                with_credentials(FakeProxyKind::Http, "user", "100%41"),
+                None,
+            ),
+            (
+                FakeProxyOptions::new(FakeProxyKind::Http),
+                Some("localhost"),
+            ),
+        ];
+        if std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).is_ok() {
+            for kind in [FakeProxyKind::Socks5, FakeProxyKind::Http] {
+                cases.push((
+                    FakeProxyOptions {
+                        listen_ip: std::net::Ipv6Addr::LOCALHOST.into(),
+                        ..FakeProxyOptions::new(kind)
+                    },
+                    None,
+                ));
+            }
+        }
+        for (opts, host) in cases {
+            let what = format!(
+                "{:?} remote_dns={} host={host:?}",
+                opts.kind, opts.remote_dns
+            );
+            let seed = start_seeder(SeederOpts::default()).await?;
+            let proxy = FakeProxy::start(opts).await;
+            let tracker = FakeTracker::start().await?;
+            let url = host.map_or_else(|| proxy.url(), |h| proxy.url_with_host(h));
+            let client = start_client(
+                &seed,
+                ClientSetup {
+                    trackers: vec![tracker.url()],
+                    ..ClientSetup::proxy(url)
+                },
+            )
+            .await?;
+            tracker
+                .wait_for_announces(1, WAIT)
+                .await
+                .with_context(|| what.clone())?;
+            let egress = proxy.egress_addrs();
+            let sources = tracker.sources();
+            assert!(
+                sources.iter().all(|s| egress.contains(s)),
+                "{what}: the tracker was reached directly: {sources:?}, proxy {egress:?}"
+            );
+            assert_eq!(proxy.auth_failures(), 0, "{what}: credentials were refused");
+            assert_no_direct_connection(&client);
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// The metadata of a magnet link comes from the seeder through every kind of proxy.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_magnet_metadata_through_each_proxy() -> anyhow::Result<()> {
+    run(async {
+        for (kind, connection) in [
+            (FakeProxyKind::Socks5, ConnectionKind::Socks),
+            (FakeProxyKind::Socks4, ConnectionKind::Socks),
+            (FakeProxyKind::Http, ConnectionKind::HttpProxy),
+        ] {
+            let seed = start_seeder(SeederOpts::default()).await?;
+            let proxy = FakeProxy::start(FakeProxyOptions::new(kind)).await;
+            let client = start_client(
+                &seed,
+                ClientSetup {
+                    magnet: true,
+                    ..ClientSetup::proxy(proxy.url())
+                },
+            )
+            .await?;
+            timeout(WAIT, client.handle.wait_until_completed())
+                .await
+                .with_context(|| format!("{kind:?}: the magnet did not complete"))??;
+            assert!(connections_made(&client, connection) > 0, "{kind:?}");
+            assert_only_proxy_reached(&seed, &proxy);
+            assert_no_direct_connection(&client);
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// A rejected password with a UDP tracker: the tracker shows an error that carries neither the
+/// password nor the user name, and gets nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_udp_tracker_wrong_password_hides_credentials() -> anyhow::Result<()> {
+    run(async {
+        let seed = start_seeder(SeederOpts::default()).await?;
+        let proxy = FakeProxy::start(with_credentials(
+            FakeProxyKind::Socks5,
+            "account-TOKEN",
+            "right",
+        ))
+        .await;
+        let tracker = FakeUdpTracker::start().await?;
+        let client = start_client(
+            &seed,
+            ClientSetup {
+                trackers: vec![tracker.url()],
+                ..ClientSetup::proxy(proxy.url_with_credentials("account-TOKEN", "wrong-SECRET"))
+            },
+        )
+        .await?;
+        wait_for("the tracker error", || {
+            tracker_rows(&client)
+                .iter()
+                .any(|(s, e)| *s == TrackerState::Error && e.is_some())
+        })
+        .await?;
+        let (_, error) = tracker_rows(&client).remove(0);
+        let error = error.unwrap_or_default();
+        assert!(
+            !error.contains("wrong-SECRET") && !error.contains("account-TOKEN"),
+            "{error}"
+        );
+        assert!(proxy.auth_failures() > 0);
+        assert_eq!(tracker.sources(), vec![], "the tracker was reached");
+        assert_no_direct_connection(&client);
+        Ok(())
+    })
+    .await
+}
+
 /// The state and the last error of every tracker of `client`.
 fn tracker_rows(client: &Fixture) -> Vec<(TrackerState, Option<String>)> {
     client
@@ -652,6 +813,81 @@ async fn test_proxy_peer_connections_off_connects_directly() -> anyhow::Result<(
             dht_sources.iter().all(|s| !relays.contains(s)),
             "the DHT went through the proxy"
         );
+        Ok(())
+    })
+    .await
+}
+
+/// `proxy_peer_connections` off with proxies that can't relay UDP: peers and the DHT go
+/// directly, the HTTP tracker through the proxy, and the UDP tracker shows the error instead of
+/// being contacted directly.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_proxy_peer_connections_off_with_tcp_only_proxies() -> anyhow::Result<()> {
+    run(async {
+        for kind in [FakeProxyKind::Http, FakeProxyKind::Socks4] {
+            let seed = start_seeder(SeederOpts::default()).await?;
+            let proxy = FakeProxy::start(FakeProxyOptions::new(kind)).await;
+            let http_tracker = FakeTracker::start().await?;
+            let udp_tracker = FakeUdpTracker::start().await?;
+            let dht_node = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+            let client = start_client(
+                &seed,
+                ClientSetup {
+                    connect: ConnectionOptions {
+                        proxy_url: Some(proxy.url()),
+                        proxy_peer_connections: false,
+                        ..Default::default()
+                    },
+                    trackers: vec![http_tracker.url(), udp_tracker.url()],
+                    dht: Some(dht_config(dht_node.local_addr()?)),
+                    ..ClientSetup::proxy(proxy.url())
+                },
+            )
+            .await?;
+            let dht = client.session.get_dht().context("no DHT")?;
+            assert!(
+                dht.proxy().is_none(),
+                "{kind:?}: the DHT is behind the proxy"
+            );
+
+            timeout(WAIT, client.handle.wait_until_completed())
+                .await
+                .with_context(|| format!("{kind:?}: direct download did not complete"))??;
+            assert!(connections_made(&client, ConnectionKind::Tcp) > 0);
+            http_tracker.wait_for_announces(1, WAIT).await?;
+            wait_for("the UDP tracker error", || {
+                tracker_rows(&client).iter().any(|(s, e)| {
+                    *s == TrackerState::Error
+                        && e.as_deref().is_some_and(|e| e.contains("cannot relay UDP"))
+                })
+            })
+            .await?;
+            let mut dht_sources = Vec::new();
+            wait_for("the DHT bootstrap", || {
+                dht_sources.extend(drain_sources(&dht_node));
+                !dht_sources.is_empty()
+            })
+            .await?;
+
+            let egress = proxy.egress_addrs();
+            let sources = http_tracker.sources();
+            assert!(
+                sources.iter().all(|s| egress.contains(s)),
+                "{kind:?}: the HTTP tracker was reached directly: {sources:?}"
+            );
+            assert!(
+                proxy
+                    .connections()
+                    .iter()
+                    .all(|c| c.target != seed.addr().to_string()),
+                "{kind:?}: the proxy was used for a peer"
+            );
+            assert_eq!(
+                udp_tracker.sources(),
+                vec![],
+                "{kind:?}: the UDP tracker was reached"
+            );
+        }
         Ok(())
     })
     .await

@@ -43,3 +43,5 @@ httparse.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+# To check that proxy URLs are valid for the HTTP stack.
+http.workspace = true

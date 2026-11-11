@@ -100,15 +100,24 @@ pub enum ProxyUrlError {
     /// The URL has no host.
     #[error("the proxy URL has no host")]
     MissingHost,
+    /// The host is neither an IP address nor a host name made of ASCII letters, digits, `-`,
+    /// `.` and `_` (international names are converted to that form).
+    #[error(
+        "the proxy host must be an IP address or a host name made of letters, digits, '-', '.' and '_'"
+    )]
+    InvalidHost,
     /// The URL has no port.
     #[error("the proxy URL has no port")]
     MissingPort,
     /// The user name or the password is not valid percent-encoded UTF-8.
     #[error("the proxy user name or password is not valid percent-encoded UTF-8")]
     InvalidCredentials,
-    /// The proxy needs both a user name and a password, or neither.
-    #[error("a {0} proxy needs both a user name and a password, or neither")]
+    /// A user name must go with a password.
+    #[error("a {0} proxy needs a user name to go with a password")]
     IncompleteCredentials(ProxyKind),
+    /// Basic authentication can't carry a `:` in the user name.
+    #[error("the user name of an http proxy can't contain ':'")]
+    ColonInHttpUserName,
     /// SOCKS4 knows only a user id, not a password.
     #[error("SOCKS4 has no passwords: give the user id alone, as {0}://userid@host:port")]
     Socks4Password(ProxyKind),
@@ -132,8 +141,11 @@ pub struct ProxyConfig {
 impl ProxyConfig {
     /// Parses a proxy URL such as `socks5h://user:pass@host:1080` or `http://[::1]:3128`.
     ///
-    /// The host and the port are required. A user name and a password are percent-decoded, so
-    /// reserved characters can be given as `%40` (`@`), `%3A` (`:`), and so on.
+    /// The host and the port are required. The host must be an IP address or an ASCII host
+    /// name (letters, digits, `-`, `.`, `_`); international names are converted to their ASCII
+    /// (`xn--`) form. A user name and a password are percent-decoded, so reserved characters
+    /// can be given as `%40` (`@`), `%3A` (`:`), and so on. A SOCKS5 user name without a
+    /// password is ignored, with a warning.
     pub fn parse(input: &str) -> Result<Self, ProxyUrlError> {
         let url = url::Url::parse(input).map_err(|e| match e {
             url::ParseError::EmptyHost => ProxyUrlError::MissingHost,
@@ -151,7 +163,18 @@ impl ProxyConfig {
 
         let host = match url.host() {
             Some(url::Host::Domain("")) | None => return Err(ProxyUrlError::MissingHost),
-            Some(url::Host::Domain(d)) => d.to_owned(),
+            // The host of a non-special scheme (`socks5://`, ...) is kept opaque and
+            // percent-encoded by the URL parser: decode it and parse it as a domain (IDNA to
+            // ASCII), then keep only what every HTTP and SOCKS stack takes as a plain name.
+            Some(url::Host::Domain(d)) => {
+                let decoded = percent_decode(d).ok_or(ProxyUrlError::InvalidHost)?;
+                match url::Host::parse(&decoded).map_err(|_| ProxyUrlError::InvalidHost)? {
+                    url::Host::Domain(name) if is_plain_host_name(&name) => name,
+                    url::Host::Domain(_) => return Err(ProxyUrlError::InvalidHost),
+                    url::Host::Ipv4(ip) => ip.to_string(),
+                    url::Host::Ipv6(ip) => ip.to_string(),
+                }
+            }
             Some(url::Host::Ipv4(ip)) => ip.to_string(),
             Some(url::Host::Ipv6(ip)) => ip.to_string(),
         };
@@ -185,7 +208,15 @@ impl ProxyConfig {
                     }
                     (Some(u), Some(p))
                 }
-                _ => return Err(ProxyUrlError::IncompleteCredentials(kind)),
+                // Without a password there is nothing to authenticate with: the user name has
+                // always been ignored.
+                (Some(_), _) => {
+                    tracing::warn!(
+                        "the user name of a {kind} proxy URL without a password is ignored"
+                    );
+                    (None, None)
+                }
+                (None, Some(_)) => return Err(ProxyUrlError::IncompleteCredentials(kind)),
             },
             ProxyKind::Socks4 | ProxyKind::Socks4a => {
                 if password.is_some() {
@@ -196,9 +227,12 @@ impl ProxyConfig {
                 }
                 (username, None)
             }
-            // Basic authentication allows an empty password.
+            // Basic authentication allows an empty password, but not a ':' in the user name.
             ProxyKind::Http => match (username, password) {
                 (None, None) => (None, None),
+                (Some(u), _) if u.contains(':') => {
+                    return Err(ProxyUrlError::ColonInHttpUserName);
+                }
                 (Some(u), p) => (Some(u), Some(p.unwrap_or_default())),
                 (None, Some(_)) => return Err(ProxyUrlError::IncompleteCredentials(kind)),
             },
@@ -228,7 +262,7 @@ impl ProxyConfig {
         self.port
     }
 
-    /// The decoded user name (the user id for SOCKS4), if any.
+    /// The decoded user name (the user id for SOCKS4), if any. It is a credential: don't log it.
     pub fn username(&self) -> Option<&str> {
         self.username.as_deref()
     }
@@ -259,22 +293,19 @@ impl fmt::Debug for ProxyConfig {
             .field("kind", &self.kind)
             .field("host", &self.host)
             .field("port", &self.port)
-            .field("username", &self.username)
+            .field("username", &self.username.as_ref().map(|_| "<hidden>"))
             .field("password", &self.password.as_ref().map(|_| "<hidden>"))
             .finish()
     }
 }
 
-/// `scheme://[user[:***]@]host:port`.
+/// `scheme://[***@]host:port`: the user name is often an account token (and the whole
+/// credential for SOCKS4), so it is hidden like the password.
 impl fmt::Display for ProxyConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}://", self.kind)?;
-        if let Some(u) = self.username.as_ref() {
-            f.write_str(u)?;
-            if self.password.is_some() {
-                f.write_str(":***")?;
-            }
-            f.write_str("@")?;
+        if self.username.is_some() {
+            f.write_str("***@")?;
         }
         write!(f, "{}", HostPort(&self.host, self.port))
     }
@@ -331,6 +362,15 @@ fn authority_has_port(input: &str) -> bool {
     after_host
         .rsplit_once(':')
         .is_some_and(|(_, port)| !port.is_empty())
+}
+
+/// An ASCII host name every HTTP and SOCKS stack accepts as it is.
+fn is_plain_host_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_'))
 }
 
 /// Decodes `%XX` escapes. `None` for a broken escape or bytes that aren't UTF-8.
@@ -420,9 +460,57 @@ mod tests {
         let c = parse("http://u:p@[2001:db8::1]:8080");
         assert_eq!(c.host(), "2001:db8::1");
         assert_eq!(c.port(), 8080);
-        assert_eq!(c.to_string(), "http://u:***@[2001:db8::1]:8080");
+        assert_eq!(c.to_string(), "http://***@[2001:db8::1]:8080");
         let c = parse("socks4://10.0.0.1:1080");
         assert_eq!(c.host(), "10.0.0.1");
+    }
+
+    #[test]
+    fn host_shapes() {
+        for scheme in ["socks5", "socks5h", "socks4", "socks4a", "http"] {
+            for (host, want) in [
+                ("127.0.0.1", "127.0.0.1"),
+                ("[::1]", "::1"),
+                ("Proxy-1.example_x", "proxy-1.example_x"),
+                ("прокси.example", "xn--h1adldfi.example"),
+                (
+                    "%D0%BF%D1%80%D0%BE%D0%BA%D1%81%D0%B8.example",
+                    "xn--h1adldfi.example",
+                ),
+            ] {
+                let url = format!("{scheme}://{host}:1080");
+                let c = parse(&url);
+                assert_eq!(c.host(), want, "{url}");
+                // What the HTTP stack parses the proxy from must be a valid URI.
+                let uri: http::Uri = c.url_without_credentials().parse().expect(&url);
+                assert_eq!(
+                    uri.host().map(|h| h.trim_matches(['[', ']'])),
+                    Some(want),
+                    "{url}"
+                );
+            }
+            for host in [
+                "a%25b", "a%22b", "a%60b", "a%7Bb", "a%7Db", "a%20b", "a%00b", "a%0Ab", "a\"b",
+                "a{b", "a}b", "a`b", "a%ffb", "a!b", "a$b",
+            ] {
+                let url = format!("{scheme}://{host}:1080");
+                assert!(
+                    matches!(
+                        ProxyConfig::parse(&url),
+                        Err(ProxyUrlError::InvalidHost | ProxyUrlError::Invalid(_))
+                    ),
+                    "{url} was accepted"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lone_socks5_user_name_is_ignored() {
+        for url in ["socks5://u@h:1", "socks5h://u:@h:1"] {
+            let c = parse(url);
+            assert_eq!((c.username(), c.password()), (None, None), "{url}");
+        }
     }
 
     #[test]
@@ -452,12 +540,12 @@ mod tests {
             ("https://h:1", HttpsProxy),
             ("socks5://h", MissingPort),
             ("socks5://:1", MissingHost),
-            ("socks5://u@h:1", IncompleteCredentials(ProxyKind::Socks5)),
-            ("socks5://u:@h:1", IncompleteCredentials(ProxyKind::Socks5)),
             (
                 "socks5h://:p@h:1",
                 IncompleteCredentials(ProxyKind::Socks5h),
             ),
+            ("http://us%3Aer:p@h:1", ColonInHttpUserName),
+            ("socks5://:p@h:1", IncompleteCredentials(ProxyKind::Socks5)),
             ("http://:p@h:1", IncompleteCredentials(ProxyKind::Http)),
             ("socks4://u:p@h:1", Socks4Password(ProxyKind::Socks4)),
             ("socks5://u:%ff@h:1", InvalidCredentials),
@@ -483,13 +571,22 @@ mod tests {
     }
 
     #[test]
-    fn password_never_shows() {
+    fn credentials_never_show() {
         let secret = "hunter2-SECRET";
-        let ok = parse(&format!("socks5h://user:{secret}@h:1"));
-        for s in [format!("{ok}"), format!("{ok:?}"), format!("{ok:#?}")] {
-            assert!(!s.contains(secret), "{s}");
+        let user = "account-TOKEN";
+        let ok = parse(&format!("socks5h://{user}:{secret}@h:1"));
+        let id = parse(&format!("socks4a://{user}@h:1"));
+        for s in [
+            format!("{ok}"),
+            format!("{ok:?}"),
+            format!("{ok:#?}"),
+            format!("{id}"),
+            format!("{id:?}"),
+        ] {
+            assert!(!s.contains(secret) && !s.contains(user), "{s}");
         }
-        assert_eq!(ok.to_string(), "socks5h://user:***@h:1");
+        assert_eq!(ok.to_string(), "socks5h://***@h:1");
+        assert_eq!(id.to_string(), "socks4a://***@h:1");
         assert_eq!(ok.url_without_credentials(), "socks5h://h:1");
 
         for url in [

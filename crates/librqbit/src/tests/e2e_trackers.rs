@@ -83,10 +83,12 @@ fn percent_decode(s: &str) -> Vec<u8> {
     out
 }
 
-/// An HTTP tracker that answers every announce with no peers and a long interval.
+/// An HTTP tracker that answers every announce with no peers and a long interval, and records
+/// where every connection came from.
 pub(super) struct FakeTracker {
     pub(super) addr: SocketAddr,
     announces: Arc<Mutex<Vec<Announce>>>,
+    sources: Arc<Mutex<Vec<SocketAddr>>>,
     task: JoinHandle<()>,
 }
 
@@ -101,12 +103,15 @@ impl FakeTracker {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let announces = Arc::new(Mutex::new(Vec::new()));
+        let sources = Arc::new(Mutex::new(Vec::new()));
         let recorded = announces.clone();
+        let recorded_sources = sources.clone();
         let task = tokio::spawn(async move {
             loop {
-                let Ok((mut sock, _)) = listener.accept().await else {
+                let Ok((mut sock, from)) = listener.accept().await else {
                     return;
                 };
+                recorded_sources.lock().push(from);
                 let recorded = recorded.clone();
                 tokio::spawn(async move {
                     let mut buf = Vec::new();
@@ -146,8 +151,14 @@ impl FakeTracker {
         Ok(Self {
             addr,
             announces,
+            sources,
             task,
         })
+    }
+
+    /// The source address of every connection so far.
+    pub(super) fn sources(&self) -> Vec<SocketAddr> {
+        self.sources.lock().clone()
     }
 
     /// The announce URL of this tracker.

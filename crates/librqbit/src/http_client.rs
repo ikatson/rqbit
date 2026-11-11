@@ -28,17 +28,40 @@ pub(crate) fn client_builder() -> reqwest::ClientBuilder {
 
 /// The reqwest proxy for a parsed proxy URL: every request of the client goes through it,
 /// credentials included. SOCKS4 user ids are not sent (reqwest has no way to).
+///
+/// reqwest hands the proxy URL to hyper-util, which silently drops a proxy whose URL it can't
+/// parse as an [`http::Uri`] and then connects directly. The URL is therefore built here and
+/// checked the same way, so such a proxy is an error instead of a direct connection.
 pub(crate) fn proxy(config: &librqbit_core::proxy::ProxyConfig) -> anyhow::Result<reqwest::Proxy> {
-    use anyhow::Context;
+    use anyhow::{Context, ensure};
     use librqbit_core::proxy::ProxyKind;
 
-    let proxy = reqwest::Proxy::all(config.url_without_credentials())
-        .with_context(|| format!("error creating the HTTP client proxy for {config}"))?;
-    Ok(
-        match (config.kind(), config.username(), config.password()) {
-            (ProxyKind::Socks4 | ProxyKind::Socks4a, _, _) => proxy,
-            (_, Some(username), Some(password)) => proxy.basic_auth(username, password),
-            _ => proxy,
-        },
-    )
+    let mut url = reqwest::Url::parse(&config.url_without_credentials())
+        .with_context(|| format!("invalid proxy URL {config}"))?;
+    if let (ProxyKind::Socks5 | ProxyKind::Socks5h | ProxyKind::Http, Some(user), Some(pass)) =
+        (config.kind(), config.username(), config.password())
+    {
+        // The URL setters leave '%' alone and hyper-util percent-decodes the credentials, so a
+        // literal '%' has to be escaped first.
+        let set = url
+            .set_username(&user.replace('%', "%25"))
+            .and_then(|()| url.set_password(Some(&pass.replace('%', "%25"))));
+        ensure!(
+            set.is_ok(),
+            "can't put the credentials of {config} in a URL"
+        );
+    }
+    let uri: http::Uri = url
+        .as_str()
+        .parse()
+        .with_context(|| format!("the HTTP client can't use the proxy {config}"))?;
+    let host = uri
+        .host()
+        .map(|h| h.trim_start_matches('[').trim_end_matches(']'));
+    ensure!(
+        host == Some(config.host()),
+        "the HTTP client can't use the proxy {config}"
+    );
+    reqwest::Proxy::all(url)
+        .with_context(|| format!("error creating the HTTP client proxy for {config}"))
 }
