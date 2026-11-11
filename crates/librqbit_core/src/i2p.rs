@@ -15,6 +15,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use anyhow::{Context, bail};
 use bytes::Bytes;
 use data_encoding::{BASE32_NOPAD, BASE64};
+#[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
 use sha1w::ISha256;
 
 /// The first 64 bits of every synthetic address: the IPv6 discard prefix `0100::/64`.
@@ -179,6 +180,9 @@ impl I2pDestination {
         &self.0
     }
 
+    /// The SHA-256 of the binary destination. Needs one of the `sha1-*` features (which also
+    /// provide SHA-256).
+    #[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
     pub fn hash(&self) -> I2pHash {
         let mut h = sha1w::Sha256::new();
         h.update(&self.0);
@@ -188,7 +192,10 @@ impl I2pDestination {
 
 impl std::fmt::Debug for I2pDestination {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "I2pDestination({})", self.hash())
+        #[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
+        return write!(f, "I2pDestination({})", self.hash());
+        #[cfg(not(any(feature = "sha1-ring", feature = "sha1-crypto-hash")))]
+        return write!(f, "I2pDestination({} bytes)", self.0.len());
     }
 }
 
@@ -200,7 +207,7 @@ pub fn is_i2p_host(host: &str) -> bool {
             .is_some_and(|s| s.eq_ignore_ascii_case(".i2p"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "sha1-ring", feature = "sha1-crypto-hash")))]
 mod tests {
     use super::*;
 

@@ -25,6 +25,7 @@ default-tls = [
     "sha1w/sha1-crypto-hash",
     "librqbit-core/sha1-crypto-hash",
     "dht/sha1-crypto-hash",
+    "tracker_comms/sha1-crypto-hash",
 ]
 miri = []
 prometheus = ["metrics-exporter-prometheus"]
@@ -35,6 +36,7 @@ rust-tls = [
     "sha1w/sha1-ring",
     "librqbit-core/sha1-ring",
     "dht/sha1-ring",
+    "tracker_comms/sha1-ring",
     "dep:webpki-root-certs",
 ]
 storage_middleware = ["lru"]

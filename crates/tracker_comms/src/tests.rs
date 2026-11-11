@@ -31,9 +31,11 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::{
-    TorrentStatsProvider, TorrentTrackers, TrackerAnnounceOptions, TrackerCommsParams,
-    TrackerCommsStats, TrackerState, TrackerTimings, UdpTrackerClient,
+    I2P_NOT_ENABLED, I2pTrackers, TorrentStatsProvider, TorrentTrackers, TrackerAnnounceOptions,
+    TrackerCommsParams, TrackerCommsStats, TrackerState, TrackerTimings, UdpTrackerClient,
+    i2p::tests::{FakeTransport, dest},
 };
+use librqbit_core::i2p::{I2pHash, synthetic_addr};
 
 // ---- fake HTTP tracker ----
 
@@ -330,6 +332,26 @@ fn build(
     timings: TrackerTimings,
     udp_client: UdpTrackerClient,
 ) -> Arc<TorrentTrackers> {
+    build_i2p(
+        tiers,
+        own,
+        options,
+        force,
+        timings,
+        udp_client,
+        I2pTrackers::default(),
+    )
+}
+
+fn build_i2p(
+    tiers: Vec<Vec<Url>>,
+    own: usize,
+    options: TrackerAnnounceOptions,
+    force: Option<Duration>,
+    timings: TrackerTimings,
+    udp_client: UdpTrackerClient,
+    i2p: I2pTrackers,
+) -> Arc<TorrentTrackers> {
     TorrentTrackers::new(
         TrackerCommsParams {
             info_hash: Id20::new([7; 20]),
@@ -346,6 +368,7 @@ fn build(
             options,
             timings,
             enabled: true,
+            i2p,
         },
         tiers,
         own,
@@ -1216,4 +1239,166 @@ async fn udp_association_is_rebuilt_when_its_control_connection_drops() {
     })
     .await;
     assert_only_relayed(&u, &proxy);
+}
+
+// ---- I2P ----
+
+async fn with_i2p(tiers: Vec<Vec<Url>>, i2p: I2pTrackers) -> Arc<TorrentTrackers> {
+    let udp_client = UdpTrackerClient::new(CancellationToken::new(), None)
+        .await
+        .unwrap();
+    let own = tiers.len();
+    build_i2p(tiers, own, all(), FAST, timings(), udp_client, i2p)
+}
+
+fn i2p_on(transport: &Arc<FakeTransport>, clearnet: bool) -> I2pTrackers {
+    I2pTrackers::On {
+        transport: transport.clone(),
+        clearnet,
+    }
+}
+
+fn i2p_url() -> Url {
+    "http://tracker.i2p/announce".parse().unwrap()
+}
+
+/// Two peers as 32-byte hashes.
+fn compact_i2p_peers() -> Vec<u8> {
+    let mut body = b"d8:intervali1800e8:completei3e5:peers64:".to_vec();
+    body.extend_from_slice(&[1; 32]);
+    body.extend_from_slice(&[2; 32]);
+    body.push(b'e');
+    body
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn i2p_tracker_is_announced_to_through_the_router() {
+    let body = compact_i2p_peers();
+    let t = FakeHttp::start(Arc::new(move |_, _| Reply::Body(body.clone()))).await;
+    let transport = FakeTransport::with_host("tracker.i2p", t.addr);
+    let tt = with_i2p(vec![vec![i2p_url()]], i2p_on(&transport, false)).await;
+    let mut stream = tt.peer_stream().expect("trackers in use");
+    let mut got = Vec::new();
+    while got.len() < 2 {
+        let addr = tokio::time::timeout(Duration::from_secs(10), stream.next())
+            .await
+            .expect("peers in time")
+            .expect("the stream goes on");
+        got.push(addr);
+    }
+    got.sort();
+    assert_eq!(got, vec![synthetic_addr(1), synthetic_addr(2)]);
+    assert_eq!(transport.addr_of(I2pHash([1; 32])), synthetic_addr(1));
+    assert_eq!(transport.connects.lock()[0], "tracker.i2p");
+
+    let req = t.requests.lock()[0].clone();
+    let ip = format!("{}.i2p", dest(9).to_i2p_base64());
+    assert_eq!(req.param("ip"), Some(urlencoding::encode(&ip).as_ref()));
+    assert_eq!(req.param("port"), Some("6881"));
+    assert_eq!(req.param("event"), Some("started"));
+    assert_eq!(req.param("compact"), Some("1"));
+    let st = &tt.stats()[0];
+    assert_eq!(st.state, TrackerState::Working);
+    assert_eq!(st.seeders, Some(3));
+
+    // The scrape goes through the router too.
+    *t.scrape_body.lock() = scrape_body(5, 6, 7);
+    tt.scrape().unwrap();
+    eventually("the I2P scrape", || tt.stats()[0].downloaded == Some(7)).await;
+    assert!(transport.connects.lock().len() >= 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn clearnet_trackers_of_an_i2p_torrent_need_mixed_mode() {
+    for mixed in [false, true] {
+        let i2p_tracker = FakeHttp::start(FakeHttp::ok(PLAIN)).await;
+        let clearnet = FakeHttp::start(FakeHttp::ok(PLAIN)).await;
+        let udp = FakeUdp::start().await;
+        let transport = FakeTransport::with_host("tracker.i2p", i2p_tracker.addr);
+        let tt = with_i2p(
+            vec![vec![i2p_url()], vec![clearnet.url()], vec![udp.url()]],
+            i2p_on(&transport, mixed),
+        )
+        .await;
+        let _consumer = consume(&tt);
+        eventually("the I2P announce", || i2p_tracker.count() >= 1).await;
+        if mixed {
+            eventually("the clearnet announces", || {
+                clearnet.count() >= 1 && !udp.events().is_empty()
+            })
+            .await;
+            // Nothing of the I2P side reaches the clearnet tracker, and the two keys differ.
+            let c = clearnet.requests.lock()[0].clone();
+            let i = i2p_tracker.requests.lock()[0].clone();
+            assert_eq!(c.param("ip"), None);
+            assert_ne!(c.param("key"), i.param("key"));
+        } else {
+            // The I2P tracker answered twice: the clearnet ones had all that time.
+            eventually("a second I2P announce", || i2p_tracker.count() >= 2).await;
+            assert_eq!(clearnet.count(), 0);
+            assert!(udp.events().is_empty());
+            for st in &tt.stats()[1..] {
+                assert_eq!(st.state, TrackerState::Error);
+                assert!(
+                    st.last_error
+                        .as_deref()
+                        .unwrap()
+                        .contains("mixed mode is off")
+                );
+            }
+        }
+        assert_eq!(*transport.connects.lock().first().unwrap(), "tracker.i2p");
+        assert!(transport.connects.lock().iter().all(|h| h == "tracker.i2p"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn i2p_trackers_without_i2p_report_why() {
+    let clearnet = FakeHttp::start(FakeHttp::ok(PLAIN)).await;
+    let tt = with_i2p(
+        vec![vec![i2p_url()], vec![clearnet.url()]],
+        I2pTrackers::default(),
+    )
+    .await;
+    let _consumer = consume(&tt);
+    eventually("the clearnet announce", || clearnet.count() >= 1).await;
+    let st = &tt.stats()[0];
+    assert_eq!(st.state, TrackerState::Error);
+    assert_eq!(st.last_error.as_deref(), Some(I2P_NOT_ENABLED));
+
+    // Only http:// reaches inside I2P.
+    let transport = Arc::new(FakeTransport::default());
+    let tt = with_i2p(
+        vec![vec!["udp://tracker.i2p:6969".parse().unwrap()]],
+        i2p_on(&transport, false),
+    )
+    .await;
+    assert!(tt.peer_stream().is_none(), "nothing is usable");
+    assert!(
+        tt.stats()[0]
+            .last_error
+            .as_deref()
+            .unwrap()
+            .contains("http://")
+    );
+    assert!(transport.connects.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn i2p_tracker_recovers_when_the_router_comes_back() {
+    let t = FakeHttp::start(FakeHttp::ok(PLAIN)).await;
+    let transport = FakeTransport::with_host("tracker.i2p", t.addr);
+    transport.down.store(true, Ordering::SeqCst);
+    let tt = with_i2p(vec![vec![i2p_url()]], i2p_on(&transport, false)).await;
+    let _consumer = consume(&tt);
+    eventually("the error", || tt.stats()[0].state == TrackerState::Error).await;
+    let err = tt.stats()[0].last_error.clone().unwrap();
+    assert!(err.contains("can't reach the tracker through I2P"), "{err}");
+    assert_eq!(t.count(), 0);
+    transport.down.store(false, Ordering::SeqCst);
+    eventually("the recovery", || {
+        tt.stats()[0].state == TrackerState::Working
+    })
+    .await;
+    assert!(t.count() >= 1);
 }
