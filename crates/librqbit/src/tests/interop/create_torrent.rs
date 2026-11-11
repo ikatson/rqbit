@@ -23,7 +23,7 @@ use crate::{
     tests::fake_peer::run,
 };
 
-use super::{Libtorrent, port_of};
+use super::Libtorrent;
 
 const WAIT: Duration = Duration::from_secs(30);
 const FORMATS: [TorrentVersion; 3] = [
@@ -403,17 +403,10 @@ async fn rqbit_session(dir: &Path) -> anyhow::Result<Arc<Session>> {
     .context("error creating session")
 }
 
-/// Whether rqbit seeds a torrent of this format. The v2 download and seeding paths of the
-/// session are not on this branch, so only v1 torrents are seeded by rqbit here.
-fn rqbit_seeds(version: TorrentVersion) -> bool {
-    version == TorrentVersion::V1
-}
-
 // libtorrent checks a folder against the torrent rqbit made of it (every piece hash, v1 and
 // v2, must be right for it to become a seeder), then another libtorrent downloads the folder
-// with that torrent, in every format. rqbit seeds the v1 torrent with
-// `create_and_serve_torrent`; the v2 and hybrid ones are seeded by the libtorrent that checked
-// them.
+// with that torrent from an rqbit seeder started by `create_and_serve_torrent`, in every
+// format.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs RQBIT_TEST_LIBTORRENT_PYTHON"]
 async fn test_interop_libtorrent_downloads_created_torrents() -> anyhow::Result<()> {
@@ -431,17 +424,11 @@ async fn test_interop_libtorrent_downloads_created_torrents() -> anyhow::Result<
                 version,
                 ..Default::default()
             };
-            let (torrent, session) = if rqbit_seeds(version) {
-                let session = rqbit_session(&dir.path().join("session")).await?;
-                let (torrent, handle) = session.create_and_serve_torrent(&content, options).await?;
-                timeout(WAIT, handle.wait_until_completed())
-                    .await
-                    .context("the rqbit seeder did not become a seeder")??;
-                (torrent, Some(session))
-            } else {
-                let torrent = create_torrent(&content, options, &BlockingSpawner::new(1)).await?;
-                (torrent, None)
-            };
+            let session = rqbit_session(&dir.path().join("session")).await?;
+            let (torrent, handle) = session.create_and_serve_torrent(&content, options).await?;
+            timeout(WAIT, handle.wait_until_completed())
+                .await
+                .context("the rqbit seeder did not become a seeder")??;
             let file = dir.path().join("rqbit.torrent");
             tokio::fs::write(&file, torrent.as_bytes()?).await?;
             let file = file.to_str().context("path")?;
@@ -457,10 +444,7 @@ async fn test_interop_libtorrent_downloads_created_torrents() -> anyhow::Result<
                 json!(true),
                 "{version:?}: libtorrent's check failed: {checked}"
             );
-            let port = match &session {
-                Some(session) => session.listen_addr().context("no listen addr")?.port(),
-                None => port_of(&checker.expect("listening", WAIT).await?, "port")?,
-            };
+            let port = session.listen_addr().context("no listen addr")?.port();
 
             let out = dir.path().join("leech");
             tokio::fs::create_dir_all(&out).await?;
@@ -476,9 +460,7 @@ async fn test_interop_libtorrent_downloads_created_torrents() -> anyhow::Result<
             }
 
             checker.send(&json!({"cmd": "quit"})).await?;
-            if let Some(session) = session {
-                session.stop().await;
-            }
+            session.stop().await;
         }
         Ok(())
     })

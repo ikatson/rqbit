@@ -35,7 +35,7 @@ use tokio::time::timeout;
 use crate::{
     AddTorrent, AddTorrentOptions, ConnectionOptions, CreateTorrentOptions, ListenerOptions,
     ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, MoveStorageMode, Session,
-    SessionOptions, SessionPersistenceConfig, TorrentMetadata, TorrentStatsState,
+    SessionOptions, SessionPersistenceConfig, TorrentMetadata, TorrentStatsState, TorrentVersion,
     api::TorrentIdOrHash,
     limits::LimitsConfig,
     storage::{
@@ -1843,36 +1843,58 @@ async fn assert_served(
 }
 
 // A folder made into a torrent is seeded from where it is without reading the data again
-// (creating the torrent hashed it), and can be downloaded from at once.
+// (creating the torrent hashed it), and can be downloaded from at once, in every format.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_create_and_serve_folder_does_not_hash_again() -> anyhow::Result<()> {
     run(async {
-        let content = Content::new(NESTED_FILES, false);
-        let dir = TempDir::with_prefix("rqbit_create_and_serve")?;
-        let folder = dir.path().join("folder");
-        content.write_to(&folder);
-        let ctl = Arc::new(Ctl::default());
-        let session = counting_seeder_session(dir.path(), &ctl).await?;
-        let (created, handle) = session
-            .create_and_serve_torrent(
-                &folder,
-                CreateTorrentOptions {
-                    piece_length: Some(PIECE_LEN as u32),
-                    ..Default::default()
-                },
-            )
-            .await?;
-        wait_initialized(&handle).await?;
-        assert_eq!(handle.output_folder(), folder);
-        assert!(handle.stats().finished);
-        assert_eq!(have_pieces(&handle)?, content.all_pieces());
-        assert_eq!(ctl.read_bytes.load(Ordering::SeqCst), 0, "data was hashed");
+        for version in [
+            TorrentVersion::V1,
+            TorrentVersion::V2,
+            TorrentVersion::Hybrid,
+        ] {
+            let content = Content::new(NESTED_FILES, false);
+            let dir = TempDir::with_prefix("rqbit_create_and_serve")?;
+            let folder = dir.path().join("folder");
+            content.write_to(&folder);
+            let ctl = Arc::new(Ctl::default());
+            let session = counting_seeder_session(dir.path(), &ctl).await?;
+            let (created, handle) = session
+                .create_and_serve_torrent(
+                    &folder,
+                    CreateTorrentOptions {
+                        piece_length: Some(PIECE_LEN as u32),
+                        version,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            wait_initialized(&handle).await?;
+            assert_eq!(handle.output_folder(), folder, "{version:?}");
+            assert!(handle.stats().finished, "{version:?}");
+            let bytes = created.as_bytes()?;
+            // v2 and hybrid torrents align every file on a piece: count their pieces.
+            let num_pieces = librqbit_core::torrent_metainfo::torrent_from_bytes(&bytes)?
+                .validate_with_piece_layers()?
+                .lengths()
+                .total_pieces() as usize;
+            assert_eq!(
+                have_pieces(&handle)?,
+                (0..num_pieces).collect::<Vec<_>>(),
+                "{version:?}"
+            );
+            assert_eq!(
+                ctl.read_bytes.load(Ordering::SeqCst),
+                0,
+                "{version:?}: data was hashed"
+            );
 
-        let content = Content {
-            torrent: created.as_bytes()?,
-            ..content
-        };
-        assert_served(&content, session, handle, dir, &ctl).await
+            let content = Content {
+                torrent: bytes,
+                ..content
+            };
+            assert_served(&content, session, handle, dir, &ctl).await?;
+        }
+        Ok(())
     })
     .await
 }
