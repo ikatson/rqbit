@@ -15,6 +15,7 @@ use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions,
     CreateTorrentOptions, DhtSessionConfig, ListOnlyResponse, ListenerMode, ListenerOptions,
     PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
+    TorrentVersion,
     dht::DhtPersistenceConfig,
     http_api::{HttpApi, HttpApiOptions},
     librqbit_spawn,
@@ -426,6 +427,48 @@ struct ShareOpts {
     /// Tracker URLs to share to (comma separated). Will append these to trackers from RQBIT_TRACKERS_FILENAME.
     #[arg(value_delimiter = ',', num_args = 0..32)]
     trackers: Vec<url::Url>,
+
+    /// The torrent format: v1 (BitTorrent v1), v2 (BEP 52) or hybrid (both).
+    #[arg(long = "torrent-version", value_enum, default_value_t = ShareTorrentVersion::V1)]
+    torrent_version: ShareTorrentVersion,
+
+    /// Mark the torrent private (BEP 27): peers only from its trackers, no DHT or PEX.
+    #[arg(long)]
+    private: bool,
+
+    /// Piece length in bytes: a power of two from 16384 (16 KiB) to 134217728 (128 MiB).
+    /// Chosen from the total size when not given.
+    #[arg(long)]
+    piece_length: Option<u32>,
+
+    /// Web seed URLs (BEP 19), http or https (comma separated or repeated).
+    #[arg(long = "web-seed", value_delimiter = ',')]
+    web_seeds: Vec<url::Url>,
+
+    /// The "source" field of the torrent, which private trackers use; changes the info hash.
+    #[arg(long)]
+    source: Option<String>,
+
+    /// A comment to put in the torrent file.
+    #[arg(long)]
+    comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ShareTorrentVersion {
+    V1,
+    V2,
+    Hybrid,
+}
+
+impl From<ShareTorrentVersion> for TorrentVersion {
+    fn from(v: ShareTorrentVersion) -> Self {
+        match v {
+            ShareTorrentVersion::V1 => TorrentVersion::V1,
+            ShareTorrentVersion::V2 => TorrentVersion::V2,
+            ShareTorrentVersion::Hybrid => TorrentVersion::Hybrid,
+        }
+    }
 }
 
 #[derive(Parser)]
@@ -978,6 +1021,12 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                     CreateTorrentOptions {
                         name: share_opts.name.as_deref(),
                         trackers,
+                        version: share_opts.torrent_version.into(),
+                        private: share_opts.private,
+                        piece_length: share_opts.piece_length,
+                        web_seeds: share_opts.web_seeds.iter().map(|u| u.to_string()).collect(),
+                        source: share_opts.source.as_deref(),
+                        comment: share_opts.comment.as_deref(),
                         ..Default::default()
                     },
                 )
@@ -1259,5 +1308,57 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_share_create_options() {
+        use clap::Parser;
+
+        use crate::{Opts, ShareTorrentVersion, SubCommand};
+
+        let opts = Opts::try_parse_from([
+            "rqbit",
+            "share",
+            "/data/folder",
+            "http://tracker.example/announce",
+            "--torrent-version",
+            "hybrid",
+            "--private",
+            "--piece-length",
+            "65536",
+            "--web-seed",
+            "http://a.example/x,https://b.example/y",
+            "--source",
+            "SRC",
+            "--comment",
+            "a comment",
+        ])
+        .unwrap();
+        let SubCommand::Share(share) = opts.subcommand else {
+            panic!("not the share command");
+        };
+        assert_eq!(share.path, "/data/folder");
+        assert_eq!(share.trackers.len(), 1);
+        assert!(matches!(share.torrent_version, ShareTorrentVersion::Hybrid));
+        assert!(share.private);
+        assert_eq!(share.piece_length, Some(65536));
+        assert_eq!(
+            share
+                .web_seeds
+                .iter()
+                .map(|u| u.as_str())
+                .collect::<Vec<_>>(),
+            ["http://a.example/x", "https://b.example/y"]
+        );
+        assert_eq!(share.source.as_deref(), Some("SRC"));
+        assert_eq!(share.comment.as_deref(), Some("a comment"));
+
+        let opts = Opts::try_parse_from(["rqbit", "share", "/data/folder"]).unwrap();
+        let SubCommand::Share(share) = opts.subcommand else {
+            panic!("not the share command");
+        };
+        assert!(matches!(share.torrent_version, ShareTorrentVersion::V1));
+        assert!(!share.private);
+        assert_eq!(share.piece_length, None);
     }
 }

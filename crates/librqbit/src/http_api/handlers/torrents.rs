@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ApiState;
 use crate::{
-    AddTorrent, ApiError, CreateTorrentOptions, MoveStorageMode, SUPPORTED_SCHEMES,
+    AddTorrent, ApiError, CreateTorrentOptions, MoveStorageMode, SUPPORTED_SCHEMES, TorrentVersion,
     api::{ApiTorrentListOpts, Result, TorrentIdOrHash},
     api_error::WithStatusError,
     http_api::timeout::Timeout,
@@ -441,6 +441,26 @@ enum CreateTorrentOutput {
     Torrent,
 }
 
+#[derive(Default, Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+enum CreateTorrentVersion {
+    #[default]
+    V1,
+    V2,
+    Hybrid,
+}
+
+impl From<CreateTorrentVersion> for TorrentVersion {
+    fn from(v: CreateTorrentVersion) -> Self {
+        match v {
+            CreateTorrentVersion::V1 => TorrentVersion::V1,
+            CreateTorrentVersion::V2 => TorrentVersion::V2,
+            CreateTorrentVersion::Hybrid => TorrentVersion::Hybrid,
+        }
+    }
+}
+
+/// Query of `POST /torrents/create`; see [`CreateTorrentOptions`] for the meaning of each.
 #[derive(Default, Deserialize, Debug)]
 pub struct HttpCreateTorrentOptions {
     #[serde(default)]
@@ -448,6 +468,18 @@ pub struct HttpCreateTorrentOptions {
     #[serde(default)]
     trackers: Vec<String>,
     name: Option<String>,
+    /// `v1` (default), `v2` or `hybrid`.
+    #[serde(default)]
+    version: CreateTorrentVersion,
+    #[serde(default)]
+    private: bool,
+    /// In bytes; automatic when absent.
+    piece_length: Option<u32>,
+    /// Repeat the parameter for several web seeds.
+    #[serde(default)]
+    web_seeds: Vec<String>,
+    source: Option<String>,
+    comment: Option<String>,
 }
 
 pub async fn h_create_torrent(
@@ -471,7 +503,13 @@ pub async fn h_create_torrent(
     let create_opts = CreateTorrentOptions {
         name: opts.name.as_deref(),
         trackers: opts.trackers,
-        piece_length: None,
+        piece_length: opts.piece_length,
+        version: opts.version.into(),
+        private: opts.private,
+        web_seeds: opts.web_seeds,
+        source: opts.source.as_deref(),
+        comment: opts.comment.as_deref(),
+        ..Default::default()
     };
 
     let (torrent, handle) = state
@@ -486,6 +524,11 @@ pub async fn h_create_torrent(
     }
     if let Ok(v) = HeaderValue::from_str(&torrent.info_hash().as_string()) {
         headers.insert("torrent-info-hash", v);
+    }
+    if let Some(v2) = torrent.info_hash_v2()
+        && let Ok(v) = HeaderValue::from_str(&v2.as_string())
+    {
+        headers.insert("torrent-info-hash-v2", v);
     }
 
     match opts.output {

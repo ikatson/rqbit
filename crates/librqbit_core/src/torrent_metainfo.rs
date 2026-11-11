@@ -1020,10 +1020,7 @@ where
             f.write_str("a byte string")
         }
 
-        fn visit_borrowed_bytes<E: serde::de::Error>(
-            self,
-            v: &'de [u8],
-        ) -> Result<Self::Value, E> {
+        fn visit_borrowed_bytes<E: serde::de::Error>(self, v: &'de [u8]) -> Result<Self::Value, E> {
             B::deserialize(BorrowedBytesDeserializer::<E>::new(v)).map(Some)
         }
 
@@ -1031,10 +1028,7 @@ where
             B::deserialize(BytesDeserializer::<E>::new(v)).map(Some)
         }
 
-        fn visit_borrowed_str<E: serde::de::Error>(
-            self,
-            v: &'de str,
-        ) -> Result<Self::Value, E> {
+        fn visit_borrowed_str<E: serde::de::Error>(self, v: &'de str) -> Result<Self::Value, E> {
             self.visit_borrowed_bytes(v.as_bytes())
         }
 

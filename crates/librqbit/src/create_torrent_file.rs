@@ -484,8 +484,11 @@ impl FileTreeHasher {
 
     fn finish_piece(&mut self) -> anyhow::Result<()> {
         let piece = std::mem::take(&mut self.current);
-        self.layer
-            .push(piece.finish(self.leaves).context("piece larger than expected")?);
+        self.layer.push(
+            piece
+                .finish(self.leaves)
+                .context("piece larger than expected")?,
+        );
         self.in_piece = 0;
         Ok(())
     }
@@ -689,7 +692,10 @@ fn web_seeds(options: &CreateTorrentOptions<'_>) -> anyhow::Result<Vec<String>> 
             continue;
         }
         if out.len() == web_seed::MAX_WEB_SEEDS {
-            bail!("too many web seeds, at most {} are allowed", web_seed::MAX_WEB_SEEDS);
+            bail!(
+                "too many web seeds, at most {} are allowed",
+                web_seed::MAX_WEB_SEEDS
+            );
         }
         out.push(url.to_owned());
     }
