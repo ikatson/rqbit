@@ -162,15 +162,19 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
             None => return,
         };
         // BEP 42: with enforcement on, the token of a node whose id does not match its address
-        // does not count, so it never becomes a storage target.
-        if !req.dht.node_id_acceptable(&resp.id, addr) {
-            trace!(?addr, id = ?resp.id, "not announcing to a node with a non-BEP 42 id");
+        // does not count, so it never becomes a storage target. The distance is the one of the
+        // id the node answered with, the id that was checked.
+        if !req
+            .dht
+            .storage_target_acceptable(target_node, resp.id, addr)
+        {
+            trace!(?addr, id = ?resp.id, listed = ?target_node, "not announcing to a node with a non-BEP 42 id");
             return;
         }
-        if req.info_hash.distance(&target_node) > self.min_distance_to_announce {
+        if req.info_hash.distance(&resp.id) > self.min_distance_to_announce {
             trace!(
                 "not announcing, {:?} is too far from {:?}",
-                target_node, req.info_hash
+                resp.id, req.info_hash
             );
             return;
         }
@@ -439,7 +443,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetItem {
     fn on_request_end(
         &self,
         req: &RecursiveRequest<Self>,
-        _target_node: Id20,
+        target_node: Id20,
         addr: SocketAddr,
         resp: &crate::Result<ResponseOrError>,
     ) {
@@ -451,7 +455,9 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetItem {
         // BEP 42: with enforcement on, a node whose id does not match its address is not a
         // storage target, as for announces.
         if let Some(token) = &resp.token
-            && req.dht.node_id_acceptable(&resp.id, addr)
+            && req
+                .dht
+                .storage_target_acceptable(target_node, resp.id, addr)
         {
             found.add_put_target(PutTarget {
                 distance: resp.id.distance(&target),
@@ -862,6 +868,22 @@ impl DhtState {
     /// match the address.
     fn node_id_acceptable(&self, id: &Id20, addr: SocketAddr) -> bool {
         !self.enforce_node_id.load(Ordering::Relaxed) || bep42::is_valid_node_id(id, addr.ip())
+    }
+
+    /// Whether a node that answered a lookup with a write token may store what we announce or
+    /// put. With BEP 42 enforcement on, the id it answered with must match its address, and it
+    /// must be the id the node was listed under: otherwise a node could be listed next to any
+    /// target and answer with an id that is valid for its address but far from that target.
+    fn storage_target_acceptable(
+        &self,
+        listed_id: Id20,
+        answered_id: Id20,
+        addr: SocketAddr,
+    ) -> bool {
+        if !self.enforce_node_id.load(Ordering::Relaxed) {
+            return true;
+        }
+        listed_id == answered_id && bep42::is_valid_node_id(&answered_id, addr.ip())
     }
 
     /// Switches BEP 42 enforcement (see [`DhtConfig::enforce_node_id`]) on or off at runtime.
@@ -2370,6 +2392,71 @@ mod tests {
 
         dht.set_enforce_node_id(false);
         assert_eq!(handed_out(&dht), HashSet::from([valid, invalid, local]));
+    }
+
+    #[tokio::test]
+    async fn test_enforce_node_id_storage_targets() {
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let dht = start_dht(silent.local_addr().unwrap()).await;
+        let addr = SocketAddr::from(([124, 31, 75, 21], 6881));
+        let valid = bep42::generate_node_id(addr.ip());
+        let mut other_valid = bep42::generate_node_id(addr.ip());
+        // Make sure the two differ in a byte BEP 42 leaves to chance.
+        other_valid.0[10] = !valid.0[10];
+        assert!(bep42::is_valid_node_id(&other_valid, addr.ip()));
+        let mut invalid = valid;
+        invalid.0[0] ^= 0xff;
+        let target = Id20::new([0x42; 20]);
+
+        // Off: whatever the node is listed under or answers with.
+        assert!(dht.storage_target_acceptable(target, valid, addr));
+        assert!(dht.storage_target_acceptable(invalid, invalid, addr));
+
+        dht.set_enforce_node_id(true);
+        assert!(dht.storage_target_acceptable(valid, valid, addr));
+        // Listed next to the target, answering with an id valid for its address: refused.
+        assert!(!dht.storage_target_acceptable(target, valid, addr));
+        assert!(!dht.storage_target_acceptable(valid, other_valid, addr));
+        assert!(!dht.storage_target_acceptable(invalid, invalid, addr));
+        // Local addresses stay exempt, but the ids must still agree.
+        let local = SocketAddr::from(([192, 168, 1, 2], 6881));
+        assert!(dht.storage_target_acceptable(invalid, invalid, local));
+        assert!(!dht.storage_target_acceptable(target, invalid, local));
+
+        // The BEP 44 lookup collects put targets through the same check.
+        let req = super::RecursiveRequest {
+            max_depth: 4,
+            info_hash: target,
+            request: super::Request::Get(target),
+            dht: dht.clone(),
+            useful_nodes_limit: 32,
+            useful_nodes: parking_lot::RwLock::new(Vec::new()),
+            peer_tx: tokio::sync::mpsc::unbounded_channel().0,
+            node_tx: tokio::sync::mpsc::unbounded_channel().0,
+            callbacks: super::RecursiveRequestCallbacksGetItem {
+                query: super::ItemQuery::Immutable,
+                found: Default::default(),
+            },
+        };
+        let answer = |id: Id20| {
+            Ok(ResponseOrError::Response(Box::new(bprotocol::Response {
+                id,
+                token: Some(ByteBufOwned::from(&b"tokn"[..])),
+                ..Default::default()
+            })))
+        };
+        for (listed, answered) in [(target, valid), (valid, valid)] {
+            super::RecursiveRequestCallbacks::on_request_end(
+                &req.callbacks,
+                &req,
+                listed,
+                addr,
+                &answer(answered),
+            );
+        }
+        let found = req.callbacks.found.lock();
+        assert_eq!(found.put_targets.len(), 1);
+        assert_eq!(found.put_targets[0].distance, valid.distance(&target));
     }
 
     #[tokio::test]
