@@ -629,3 +629,176 @@ async fn test_leechers_trade_and_the_seeder_uploads_about_one_copy() -> anyhow::
     })
     .await
 }
+
+// The flag over the HTTP API, served on a loopback port picked by the OS and driven with reqwest
+// as a remote client would.
+#[cfg(feature = "http-api")]
+mod http {
+    use std::{net::Ipv4Addr, sync::Arc};
+
+    use anyhow::Context;
+    use librqbit_dualstack_sockets::{BindOpts, TcpListener};
+    use reqwest::StatusCode;
+    use serde_json::{Value, json};
+    use tempfile::TempDir;
+
+    use super::super::fake_peer::{SeederOpts, run, start_seeder};
+    use crate::{
+        Api, Session, SessionOptions,
+        http_api::{HttpApi, HttpApiOptions},
+    };
+
+    struct Served {
+        base: String,
+        client: reqwest::Client,
+        server: tokio::task::JoinHandle<anyhow::Result<()>>,
+    }
+
+    impl Drop for Served {
+        fn drop(&mut self) {
+            self.server.abort();
+        }
+    }
+
+    impl Served {
+        async fn start(session: &Arc<Session>, read_only: bool) -> anyhow::Result<Self> {
+            let listener = TcpListener::bind_tcp(
+                (Ipv4Addr::LOCALHOST, 0).into(),
+                BindOpts {
+                    request_dualstack: false,
+                    reuseport: false,
+                    device: None,
+                },
+            )
+            .context("binding the HTTP API")?;
+            let addr = listener.bind_addr();
+            let api = Api::new(
+                session.clone(),
+                None,
+                #[cfg(feature = "tracing-subscriber-utils")]
+                None,
+            );
+            let http = HttpApi::new(
+                api,
+                Some(HttpApiOptions {
+                    read_only,
+                    ..Default::default()
+                }),
+            );
+            let server = tokio::spawn(http.make_http_api_and_run(listener, None));
+            Ok(Self {
+                base: format!("http://{addr}"),
+                client: reqwest::Client::new(),
+                server,
+            })
+        }
+
+        async fn get(&self, path: &str) -> anyhow::Result<Value> {
+            let resp = self
+                .client
+                .get(format!("{}{path}", self.base))
+                .send()
+                .await?;
+            let status = resp.status();
+            let text = resp.text().await?;
+            anyhow::ensure!(status == StatusCode::OK, "GET {path}: {status} {text}");
+            serde_json::from_str(&text).with_context(|| format!("GET {path}: {text}"))
+        }
+
+        async fn post(
+            &self,
+            path: &str,
+            body: impl Into<reqwest::Body>,
+        ) -> anyhow::Result<(StatusCode, String)> {
+            let resp = self
+                .client
+                .post(format!("{}{path}", self.base))
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await?;
+            let status = resp.status();
+            Ok((status, resp.text().await?))
+        }
+    }
+
+    // The setter changes the flag and the getter and the stats show it; a malformed body is
+    // refused and changes nothing; a read-only API has the getter only.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_http_get_and_set_super_seeding() -> anyhow::Result<()> {
+        run(async {
+            let seed = start_seeder(SeederOpts::default()).await?;
+            let served = Served::start(&seed.session, false).await?;
+            let path = format!("/torrents/{}/super_seeding", seed.handle.id());
+            let stats = format!("/torrents/{}/stats/v1", seed.handle.id());
+            assert_eq!(served.get(&path).await?, json!({ "super_seeding": false }));
+            assert_eq!(served.get(&stats).await?["super_seeding"], json!(false));
+
+            let (status, text) = served.post(&path, r#"{"super_seeding": true}"#).await?;
+            assert_eq!(status, StatusCode::OK, "{text}");
+            assert!(seed.handle.super_seeding());
+            assert_eq!(served.get(&path).await?, json!({ "super_seeding": true }));
+            assert_eq!(served.get(&stats).await?["super_seeding"], json!(true));
+
+            for body in [r#"{"super_seeding": 1}"#, "{}", "true"] {
+                let (status, text) = served.post(&path, body).await?;
+                assert!(status.is_client_error(), "{body}: {status} {text}");
+                assert!(seed.handle.super_seeding(), "{body} changed the flag");
+            }
+
+            let read_only = Served::start(&seed.session, true).await?;
+            let (status, text) = read_only.post(&path, r#"{"super_seeding": false}"#).await?;
+            assert!(
+                status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
+                "{status} {text}"
+            );
+            assert!(seed.handle.super_seeding());
+            assert_eq!(
+                read_only.get(&path).await?,
+                json!({ "super_seeding": true })
+            );
+
+            let (status, text) = served.post(&path, r#"{"super_seeding": false}"#).await?;
+            assert_eq!(status, StatusCode::OK, "{text}");
+            assert!(!seed.handle.super_seeding());
+            Ok(())
+        })
+        .await
+    }
+
+    // A torrent added over HTTP with `super_seeding=true` has the flag.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_http_add_with_super_seeding() -> anyhow::Result<()> {
+        run(async {
+            let seed = start_seeder(SeederOpts::default()).await?;
+            let dir = TempDir::with_prefix("rqbit_super_seeding_http_add")?;
+            let session = Session::new_with_opts(
+                dir.path().into(),
+                SessionOptions {
+                    dht: None,
+                    persistence: None,
+                    listen: None,
+                    ..Default::default()
+                },
+            )
+            .await?;
+            let served = Served::start(&session, false).await?;
+            let (status, text) = served
+                .post(
+                    "/torrents?super_seeding=true&overwrite=true",
+                    seed.torrent_bytes.clone(),
+                )
+                .await?;
+            assert_eq!(status, StatusCode::OK, "{text}");
+            let added: Value = serde_json::from_str(&text)?;
+            let id = added["id"].as_u64().context("no id in the response")?;
+            assert_eq!(
+                served.get(&format!("/torrents/{id}/super_seeding")).await?,
+                json!({ "super_seeding": true })
+            );
+            session.stop().await;
+            Ok(())
+        })
+        .await
+    }
+}
