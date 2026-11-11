@@ -581,7 +581,8 @@ pub(crate) fn torrent_bytes_with_piece_layers(
     const KEY: &[u8] = b"piece layers";
     let mut encoded_layers = Vec::new();
     if !layers.0.is_empty() {
-        bencode::bencode_serialize_to_writer(KEY, &mut encoded_layers)
+        // A byte string: `&[u8]` itself would be serialized as a list of integers.
+        bencode::bencode_serialize_to_writer(buffers::ByteBuf(KEY), &mut encoded_layers)
             .context("error serializing the piece layers key")?;
         bencode::bencode_serialize_to_writer(layers, &mut encoded_layers)
             .context("error serializing the piece layers")?;
@@ -621,4 +622,47 @@ pub(crate) fn torrent_bytes_with_piece_layers(
     }
     out.push(b'e');
     Ok(out.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use librqbit_core::{metainfo_v2::PieceLayers, torrent_metainfo::torrent_from_bytes};
+
+    use super::torrent_bytes_with_piece_layers;
+    use crate::tests::v2_torrent::{B, V2Files};
+
+    /// Adding the layers to a torrent without them gives back the original bytes, keys before
+    /// and after `piece layers` included; replacing them is a no-op; no layers removes them.
+    #[test]
+    fn test_torrent_bytes_with_piece_layers() {
+        for hybrid in [false, true] {
+            let files = V2Files::random(&[("a", 100_000), ("b/c", 40_000), ("d", 10)], 1);
+            let mut full = files.torrent("t", 32 * 1024, hybrid);
+            full.set("announce", B::s("http://example.com/announce"));
+            full.set("url-list", B::s("http://example.com/files/"));
+            let full_bytes = full.to_bytes();
+            let mut stripped = full.clone();
+            stripped.remove("piece layers");
+            let stripped_bytes = stripped.to_bytes();
+
+            let parsed = torrent_from_bytes(&full_bytes).unwrap();
+            let layers = parsed
+                .validate_with_piece_layers()
+                .unwrap()
+                .known_piece_layers();
+            assert_eq!(layers.0.len(), 2);
+            let rebuilt = torrent_bytes_with_piece_layers(&stripped_bytes, &layers).unwrap();
+            assert_eq!(&rebuilt[..], &full_bytes[..], "hybrid={hybrid}");
+            let replaced = torrent_bytes_with_piece_layers(&full_bytes, &layers).unwrap();
+            assert_eq!(&replaced[..], &full_bytes[..], "hybrid={hybrid}");
+            let removed =
+                torrent_bytes_with_piece_layers(&full_bytes, &PieceLayers(Vec::new())).unwrap();
+            assert_eq!(&removed[..], &stripped_bytes[..], "hybrid={hybrid}");
+
+            assert!(torrent_bytes_with_piece_layers(b"le", &layers).is_err());
+            let mut trailing = stripped_bytes.clone();
+            trailing.push(b'x');
+            assert!(torrent_bytes_with_piece_layers(&trailing, &layers).is_err());
+        }
+    }
 }

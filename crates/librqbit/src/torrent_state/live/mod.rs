@@ -39,7 +39,7 @@
 // > so don't lock them both at the same time at all, or at the worst lock them in the
 // > same order (peers one first, then the global one).
 
-mod hashes;
+pub(crate) mod hashes;
 pub mod peer;
 pub mod peers;
 pub mod stats;
