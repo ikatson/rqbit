@@ -36,12 +36,60 @@ pub(crate) mod test_util;
 use std::{
     any::{Any, TypeId},
     io::IoSlice,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use librqbit_core::lengths::ValidPieceIndex;
+use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
+
+/// What [`crate::Session::move_storage`] does with a file of the torrent that already
+/// exists at the destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MoveStorageMode {
+    /// Refuse the move, before touching anything, if any file of the torrent already
+    /// exists at the destination.
+    #[default]
+    FailIfExists,
+    /// Replace what is at the destination with the torrent's file. The replaced file is
+    /// kept aside until every file has moved, so a failed move puts it back.
+    Overwrite,
+    /// Leave a file that already exists at the destination as it is and use it from now
+    /// on. The source file is removed only if the destination file holds exactly the same
+    /// bytes; otherwise it stays where it was. Because an adopted file that differs may hold
+    /// other data, a torrent that adopted such a file is rechecked after the move.
+    KeepExisting,
+}
+
+/// The arguments of [`TorrentStorage::move_storage`].
+pub struct MoveStorageRequest<'a> {
+    /// Where the files go. The relative path of each file is kept below it.
+    pub new_output_folder: &'a Path,
+    /// The relative path of every file of the torrent, by file index, as the storage
+    /// knows it today (renames included). `None` for files that are never stored, i.e.
+    /// BEP 47 padding files.
+    pub files: &'a [Option<PathBuf>],
+    pub mode: MoveStorageMode,
+    /// Cancelled when the torrent is deleted or the session stops. A storage that sees it
+    /// should undo what it moved and return an error.
+    pub cancel: &'a CancellationToken,
+}
+
+/// What [`TorrentStorage::move_storage`] did.
+#[derive(Debug, Default)]
+pub struct MoveStorageOutcome {
+    /// Files that were already at the destination, differ from the torrent's own (or the
+    /// torrent had none) and were kept instead of it (only with
+    /// [`MoveStorageMode::KeepExisting`]). Their content is unverified.
+    pub adopted_files: Vec<usize>,
+}
+
+fn unsupported<T>(operation: &str) -> anyhow::Result<T> {
+    anyhow::bail!("{operation} is not supported by this storage")
+}
 
 pub trait StorageFactory: Send + Sync + Any {
     type Storage: TorrentStorage;
@@ -180,6 +228,65 @@ pub trait TorrentStorage: Send + Sync {
     fn on_piece_completed(&self, _piece_index: ValidPieceIndex) -> anyhow::Result<()> {
         Ok(())
     }
+
+    /// The length the data of `file_id` has in the storage right now, or `None` if the
+    /// file doesn't exist there. [`crate::AddTorrentOptions::skip_initial_check`] uses it to
+    /// see whether the content is complete without reading it.
+    ///
+    /// The default says the storage can't tell, which makes the torrent hash its data.
+    fn file_length(&self, _file_id: usize) -> anyhow::Result<Option<u64>> {
+        unsupported("asking for a file's length")
+    }
+
+    /// Give file `file_id` a new path, `to`, relative to the output folder. `from` is the
+    /// path it has now. Directories `to` needs are created; directories that `from` leaves
+    /// empty are removed. A file that doesn't exist yet only changes name: it will be created
+    /// at `to`. Must work while I/O on the other files goes on, and leave the file usable
+    /// at its new path afterwards (an open handle is closed before the rename and reopened
+    /// after it, which Windows needs). On error the file is where it was.
+    ///
+    /// Used by [`crate::Session::rename_file`].
+    fn rename_file(&self, _file_id: usize, _from: &Path, _to: &Path) -> anyhow::Result<()> {
+        unsupported("renaming files")
+    }
+
+    /// Move every file of the torrent that exists to `request.new_output_folder`, keeping
+    /// its relative path, and use the new folder from then on. The torrent does no I/O
+    /// while this runs. Must be all or nothing: on error, what was moved is moved back and
+    /// the storage keeps working at the old folder.
+    ///
+    /// A successful move is pending until [`Self::finish_move_storage`]: what it replaced
+    /// or left behind (files set aside, sources of adopted files, emptied directories) stays
+    /// until then, so that the move can still be undone.
+    ///
+    /// Used by [`crate::Session::move_storage`], which explains the semantics of
+    /// [`MoveStorageMode`].
+    fn move_storage(
+        &self,
+        _request: &MoveStorageRequest<'_>,
+    ) -> anyhow::Result<MoveStorageOutcome> {
+        unsupported("moving storage")
+    }
+
+    /// Ends the move that the last successful [`Self::move_storage`] left pending. With
+    /// `commit`, removes what it left behind; otherwise moves every file back and uses the
+    /// old folder again (an error then says which files couldn't be put back). Called exactly
+    /// once after each successful `move_storage`, before any other I/O.
+    fn finish_move_storage(&self, _commit: bool) -> anyhow::Result<()> {
+        unsupported("moving storage")
+    }
+
+    /// Forget whatever this storage keeps of the data in memory in front of where it
+    /// stores it, so that the reads after this see what is really stored. Every check of
+    /// the torrent (the initial one, the validation of the fastresume bitfield and
+    /// [`crate::Session::force_recheck`]) calls it before it hashes anything: a cached
+    /// copy of a piece would hide that the piece changed or got damaged where it's stored.
+    ///
+    /// The default does nothing, which is right for a storage that reads straight from
+    /// where the data lives. A storage that wraps another one forwards this to it.
+    fn forget_cached_data(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
@@ -226,6 +333,26 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
         (**self).on_piece_completed(piece_id)
+    }
+
+    fn file_length(&self, file_id: usize) -> anyhow::Result<Option<u64>> {
+        (**self).file_length(file_id)
+    }
+
+    fn rename_file(&self, file_id: usize, from: &Path, to: &Path) -> anyhow::Result<()> {
+        (**self).rename_file(file_id, from, to)
+    }
+
+    fn move_storage(&self, request: &MoveStorageRequest<'_>) -> anyhow::Result<MoveStorageOutcome> {
+        (**self).move_storage(request)
+    }
+
+    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
+        (**self).finish_move_storage(commit)
+    }
+
+    fn forget_cached_data(&self) -> anyhow::Result<()> {
+        (**self).forget_cached_data()
     }
 }
 

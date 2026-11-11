@@ -167,7 +167,9 @@ impl JsonSessionPersistenceStore {
             is_paused: torrent.is_paused(),
             web_seeds: Some(torrent.web_seed_urls()),
             disable_web_seeds: torrent.web_seeds_disabled_for_torrent(),
-            output_folder: torrent.shared().options.output_folder.clone(),
+            output_folder: torrent.output_folder(),
+            renamed_files: torrent.shared().renamed_files(),
+            move_in_progress: torrent.shared().move_in_progress(),
         };
 
         let torrent_bytes = torrent

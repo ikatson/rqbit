@@ -14,6 +14,7 @@ use crate::{
 };
 
 fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)>> {
+    let renamed_files = handle.shared().renamed_files();
     let mut playlist_items = handle
         .metadata
         .load()
@@ -23,7 +24,14 @@ fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)
         .iter_file_details()
         .enumerate()
         .filter_map(|(file_idx, file_details)| {
-            let filename = file_details.filename.to_vec().join("/");
+            // The file's name as it's stored now.
+            let filename = match renamed_files.get(&file_idx) {
+                Some(path) => path
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .join("/"),
+                None => file_details.filename.to_vec().join("/"),
+            };
             let is_playable = mime_guess::from_path(&filename)
                 .first()
                 .map(|mime| {
