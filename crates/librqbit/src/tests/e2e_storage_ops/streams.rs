@@ -8,115 +8,12 @@
 
 use std::pin::pin;
 
-use librqbit_core::lengths::ValidPieceIndex;
 use tokio::io::AsyncReadExt;
 
 use super::*;
 
 // In nested directories, followed by a padding file (with `pad`).
 const STREAMED: &str = "sub/deeper/b.bin";
-
-// Holds `rename_file` at a gate, so that a test can act while a rename is in progress (the
-// instrumented storage has no such gate).
-#[derive(Clone, Default)]
-struct RenameGatedFactory {
-    gate: Arc<Gate>,
-}
-
-struct RenameGated {
-    inner: Box<dyn TorrentStorage>,
-    gate: Arc<Gate>,
-}
-
-impl StorageFactory for RenameGatedFactory {
-    type Storage = RenameGated;
-
-    fn create(
-        &self,
-        shared: &ManagedTorrentShared,
-        metadata: &TorrentMetadata,
-    ) -> anyhow::Result<RenameGated> {
-        Ok(RenameGated {
-            inner: Box::new(FilesystemStorageFactory::default().create(shared, metadata)?),
-            gate: self.gate.clone(),
-        })
-    }
-
-    fn is_type_id(&self, type_id: std::any::TypeId) -> bool {
-        FilesystemStorageFactory::default().is_type_id(type_id)
-    }
-
-    fn clone_box(&self) -> BoxStorageFactory {
-        self.clone().boxed()
-    }
-}
-
-impl TorrentStorage for RenameGated {
-    fn init(
-        &mut self,
-        shared: &ManagedTorrentShared,
-        metadata: &TorrentMetadata,
-    ) -> anyhow::Result<()> {
-        self.inner.init(shared, metadata)
-    }
-
-    fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.inner.pread_exact(file_id, offset, buf)
-    }
-
-    fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        self.inner.pwrite_all(file_id, offset, buf)
-    }
-
-    fn pwrite_all_vectored(
-        &self,
-        file_id: usize,
-        offset: u64,
-        bufs: [std::io::IoSlice<'_>; 2],
-    ) -> anyhow::Result<usize> {
-        self.inner.pwrite_all_vectored(file_id, offset, bufs)
-    }
-
-    fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()> {
-        self.inner.remove_file(file_id, filename)
-    }
-
-    fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
-        self.inner.remove_directory_if_empty(path)
-    }
-
-    fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()> {
-        self.inner.ensure_file_length(file_id, length)
-    }
-
-    fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(RenameGated {
-            inner: self.inner.take()?,
-            gate: self.gate.clone(),
-        }))
-    }
-
-    fn on_piece_completed(&self, piece_index: ValidPieceIndex) -> anyhow::Result<()> {
-        self.inner.on_piece_completed(piece_index)
-    }
-
-    fn file_length(&self, file_id: usize) -> anyhow::Result<Option<u64>> {
-        self.inner.file_length(file_id)
-    }
-
-    fn rename_file(&self, file_id: usize, from: &Path, to: &Path) -> anyhow::Result<()> {
-        self.gate.pass();
-        self.inner.rename_file(file_id, from, to)
-    }
-
-    fn move_storage(&self, request: &MoveStorageRequest<'_>) -> anyhow::Result<MoveStorageOutcome> {
-        self.inner.move_storage(request)
-    }
-
-    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
-        self.inner.finish_move_storage(commit)
-    }
-}
 
 // `content` written to `folder` and added, complete, to a new session in `dir` with storage
 // made by `factory`.
@@ -215,10 +112,16 @@ async fn test_stream_read_waits_for_rename() -> anyhow::Result<()> {
         let renamed = "renamed/b2.bin";
         let dir = TempDir::with_prefix("rqbit_stream_rename")?;
         let folder = dir.path().join("out");
-        let factory = RenameGatedFactory::default();
-        let gate = factory.gate.clone();
-        let (session, handle) =
-            add_complete(dir.path(), &folder, &content, factory.boxed(), None).await?;
+        let ctl = Arc::new(Ctl::default());
+        let gate = ctl.rename_gate.clone();
+        let (session, handle) = add_complete(
+            dir.path(),
+            &folder,
+            &content,
+            InstrumentedFactory { ctl }.boxed(),
+            None,
+        )
+        .await?;
         let mut stream = handle.clone().stream(file.index).await?;
 
         gate.arm();
