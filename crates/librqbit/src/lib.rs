@@ -45,6 +45,7 @@ pub mod api;
 mod api_error;
 mod bitv;
 mod bitv_factory;
+mod choker;
 mod chunk_tracker;
 mod create_torrent_file;
 mod dht_utils;
@@ -76,6 +77,7 @@ mod torrent_state;
 #[cfg(feature = "tracing-subscriber-utils")]
 pub mod tracing_subscriber_config_utils;
 mod type_aliases;
+mod upload_gate;
 #[cfg(all(feature = "http-api", feature = "upnp-serve-adapter"))]
 pub mod upnp_server_adapter;
 mod vectored_traits;
@@ -86,6 +88,7 @@ pub use error::{Error, Result};
 
 pub use api::Api;
 pub use api_error::{ApiError, WithStatus, WithStatusError};
+pub use choker::UploadSlots;
 pub use create_torrent_file::{CreateTorrentOptions, CreateTorrentResult, create_torrent};
 pub use dht;
 pub use librqbit_core::spawn_utils::spawn as librqbit_spawn;

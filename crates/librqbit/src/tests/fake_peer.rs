@@ -26,7 +26,7 @@ use tokio::{
 
 use crate::{
     AddTorrent, AddTorrentOptions, ConnectionOptions, CreateTorrentOptions, ListenerOptions,
-    Session, SessionOptions, create_torrent,
+    PeerConnectionOptions, Session, SessionOptions, UploadSlots, create_torrent,
     limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
     tests::test_util::{create_default_random_dir_with_torrents, setup_test_logging},
@@ -170,8 +170,20 @@ impl FakePeer {
         self.send(2, &[]).await
     }
 
+    pub(super) async fn not_interested(&mut self) -> anyhow::Result<()> {
+        self.send(3, &[]).await
+    }
+
+    pub(super) async fn choke(&mut self) -> anyhow::Result<()> {
+        self.send(0, &[]).await
+    }
+
     pub(super) async fn unchoke(&mut self) -> anyhow::Result<()> {
         self.send(1, &[]).await
+    }
+
+    pub(super) async fn keep_alive(&mut self) -> anyhow::Result<()> {
+        self.send_raw(&[0; 4]).await
     }
 
     pub(super) async fn piece(
@@ -280,6 +292,20 @@ impl FakePeer {
         Ok(out)
     }
 
+    /// Waits for `msg`, skipping whatever arrives before it.
+    pub(super) async fn expect(&mut self, msg: Wire, within: Duration) -> anyhow::Result<()> {
+        let deadline = Instant::now() + within;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.recv(left).await {
+                Recv::Msg(m) if m == msg => return Ok(()),
+                Recv::Msg(_) => {}
+                Recv::Timeout => bail!("no {msg:?} in {within:?}"),
+                Recv::Closed => bail!("closed before {msg:?}"),
+            }
+        }
+    }
+
     pub(super) async fn expect_closed(&mut self, within: Duration) -> anyhow::Result<Vec<Wire>> {
         let (msgs, closed) = self.collect(within).await;
         anyhow::ensure!(closed, "connection still open, received {msgs:?}");
@@ -322,6 +348,9 @@ impl Fixture {
 #[derive(Default)]
 pub(super) struct SeederOpts {
     pub(super) upload_bps: Option<u32>,
+    pub(super) upload_slots: UploadSlots,
+    /// How long a peer may send nothing before the seeder gives up on it. `None`: the default.
+    pub(super) read_write_timeout: Option<Duration>,
 }
 
 fn loopback_listener() -> ListenerOptions {
@@ -359,6 +388,7 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
                 upload_bps: opts.upload_bps.and_then(NonZeroU32::new),
                 download_bps: None,
             },
+            upload_slots: opts.upload_slots,
             ..Default::default()
         },
     )
@@ -371,6 +401,10 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
                 paused: false,
                 output_folder: Some(dir.path().to_str().unwrap().to_owned()),
                 overwrite: true,
+                peer_opts: Some(PeerConnectionOptions {
+                    read_write_timeout: opts.read_write_timeout,
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
         )
@@ -396,6 +430,8 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
 pub(super) struct ClientOpts {
     pub(super) listen: bool,
     pub(super) initial_peers: Vec<SocketAddr>,
+    /// How long a peer may send nothing before the client gives up on it. `None`: the default.
+    pub(super) read_write_timeout: Option<Duration>,
 }
 
 /// A client downloading the torrent of `seed` into an empty folder.
@@ -421,6 +457,10 @@ pub(super) async fn start_client(seed: &Fixture, opts: ClientOpts) -> anyhow::Re
             Some(AddTorrentOptions {
                 paused: false,
                 initial_peers: (!opts.initial_peers.is_empty()).then_some(opts.initial_peers),
+                peer_opts: Some(PeerConnectionOptions {
+                    read_write_timeout: opts.read_write_timeout,
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
         )

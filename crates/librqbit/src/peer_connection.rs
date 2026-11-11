@@ -45,6 +45,17 @@ pub trait PeerConnectionHandler {
     async fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()>;
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
+    /// Asked right before an accepted upload request is read from disk. `false` skips it: the
+    /// peer cancelled it, or was choked, while it was queued.
+    fn should_upload_chunk(&self, _chunk: &ChunkInfo) -> bool {
+        true
+    }
+    /// Asked while the peer sends nothing. `true` excuses the silence: right now the peer has
+    /// nothing to tell us, so only keep-alives are due ([`SILENT_PEER_TIMEOUT`]). The read
+    /// timeout only runs while the silence is not excused.
+    fn may_be_silent(&self) -> bool {
+        false
+    }
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
     fn update_my_extended_handshake(
         &self,
@@ -115,6 +126,11 @@ pub(crate) async fn with_timeout<T>(
 ) -> crate::Result<T> {
     fut.await
 }
+
+/// How long a peer that has nothing to tell us ([`PeerConnectionHandler::may_be_silent`]) may
+/// send nothing at all before its connection is taken for dead. Clients send a keep-alive every
+/// two minutes or so (BEP 3).
+pub(crate) const SILENT_PEER_TIMEOUT: Duration = Duration::from_secs(300);
 
 struct ManagePeerArgs {
     handshake_supports_extended: bool,
@@ -339,15 +355,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 trace!("sent bitfield");
             }
 
-            let len = Message::Unchoke.serialize(&mut *write_buf, &Default::default)?;
-            with_timeout(
-                "writing",
-                rwtimeout,
-                write.write_all(&write_buf[..len]).map_err(Error::Write),
-            )
-            .await?;
-            trace!("sent unchoke");
-
             let mut broadcast_closed = false;
 
             loop {
@@ -402,6 +409,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             .serialize(&mut *write_buf, ext_msg_ids)?
                     }
                     WriterRequest::ReadChunkRequest(chunk) => {
+                        if !self.handler.should_upload_chunk(&chunk) {
+                            continue;
+                        }
                         #[allow(unused_mut)]
                         let mut skip_reading_for_e2e_tests = false;
 
@@ -476,8 +486,30 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         };
 
         let reader = async move {
+            // The peer is given up on when it sent nothing for the read timeout without an
+            // excuse. An excuse can end at any moment (the peer gets an upload slot, or
+            // unchokes us), and the silence counts against the peer from then on only, so the
+            // handler is asked twice within the timeout rather than once at its end.
+            let patience = rwtimeout / 2;
+            let mut heard_at = Instant::now();
+            let mut excused_at = heard_at;
             loop {
-                let message = read_buf.read_message(&mut read, rwtimeout).await?;
+                let message = match read_buf.read_message(&mut read, patience).await {
+                    Err(Error::Timeout(name)) => {
+                        let now = Instant::now();
+                        if self.handler.may_be_silent() {
+                            excused_at = now;
+                        }
+                        if now.duration_since(excused_at.max(heard_at)) < rwtimeout
+                            && now.duration_since(heard_at) < SILENT_PEER_TIMEOUT
+                        {
+                            continue;
+                        }
+                        return Err(Error::Timeout(name));
+                    }
+                    r => r?,
+                };
+                heard_at = Instant::now();
                 trace!("received: {:?}", &message);
 
                 tokio::task::yield_now().await;
