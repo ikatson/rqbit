@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::{num::NonZeroU32, path::PathBuf};
 
 use crate::{
-    api::TorrentIdOrHash, bitv::BitV, bitv_factory::BitVFactory, session::TorrentId,
-    torrent_state::ManagedTorrentHandle, type_aliases::BF,
+    api::TorrentIdOrHash, bitv::BitV, bitv_factory::BitVFactory, limits::LimitsConfig,
+    session::TorrentId, torrent_state::ManagedTorrentHandle, type_aliases::BF,
 };
 use anyhow::Context;
 use futures::{StreamExt, stream::BoxStream};
@@ -26,6 +26,17 @@ struct TorrentsTableRecord {
     output_folder: String,
     only_files: Option<Vec<i32>>,
     is_paused: bool,
+    upload_bps: Option<i64>,
+    download_bps: Option<i64>,
+}
+
+// NULL is unlimited, and so is a value that does not fit (the column is wider than the rate).
+fn bps_from_column(v: Option<i64>) -> Option<NonZeroU32> {
+    NonZeroU32::new(u32::try_from(v?).ok()?)
+}
+
+fn bps_to_column(v: Option<NonZeroU32>) -> Option<i64> {
+    v.map(|v| i64::from(v.get()))
 }
 
 impl TorrentsTableRecord {
@@ -41,6 +52,10 @@ impl TorrentsTableRecord {
                     .only_files
                     .map(|v| v.into_iter().map(|v| v as usize).collect()),
                 is_paused: self.is_paused,
+                ratelimits: LimitsConfig {
+                    upload_bps: bps_from_column(self.upload_bps),
+                    download_bps: bps_from_column(self.download_bps),
+                },
             },
         ))
     }
@@ -80,6 +95,8 @@ impl PostgresSessionStorage {
         );
 
         exec!("ALTER TABLE torrents ADD COLUMN IF NOT EXISTS have_bitfield BYTEA");
+        exec!("ALTER TABLE torrents ADD COLUMN IF NOT EXISTS upload_bps BIGINT");
+        exec!("ALTER TABLE torrents ADD COLUMN IF NOT EXISTS download_bps BIGINT");
 
         Ok(Self { pool })
     }
@@ -102,9 +119,10 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             .as_ref()
             .map(|i| i.torrent_bytes.clone())
             .unwrap_or_default();
-        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused)
-        VALUES($1, $2, $3, $4, $5, $6, $7)
+        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused, upload_bps, download_bps)
+        VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT(id) DO NOTHING";
+        let ratelimits = torrent.ratelimits();
         sqlx::query(q)
             .bind::<i32>(id.try_into()?)
             .bind(&torrent.info_hash().0[..])
@@ -132,6 +150,8 @@ impl SessionPersistenceStore for PostgresSessionStorage {
                     .collect::<Vec<i32>>()
             }))
             .bind(torrent.is_paused())
+            .bind(bps_to_column(ratelimits.upload_bps))
+            .bind(bps_to_column(ratelimits.download_bps))
             .execute(&self.pool)
             .await
             .context("error executing INSERT INTO torrents")?;
@@ -163,14 +183,19 @@ impl SessionPersistenceStore for PostgresSessionStorage {
         id: TorrentId,
         torrent: &ManagedTorrentHandle,
     ) -> anyhow::Result<()> {
-        sqlx::query("UPDATE torrents SET only_files = $1, is_paused = $2 WHERE id = $3")
-            .bind(torrent.only_files().map(|v| {
-                v.into_iter()
-                    .filter_map(|f| f.try_into().ok())
-                    .collect::<Vec<i32>>()
-            }))
-            .bind(torrent.is_paused())
-            .bind::<i32>(id.try_into()?)
+        let ratelimits = torrent.ratelimits();
+        sqlx::query(
+            "UPDATE torrents SET only_files = $1, is_paused = $2, upload_bps = $3, download_bps = $4 WHERE id = $5",
+        )
+        .bind(torrent.only_files().map(|v| {
+            v.into_iter()
+                .filter_map(|f| f.try_into().ok())
+                .collect::<Vec<i32>>()
+        }))
+        .bind(torrent.is_paused())
+        .bind(bps_to_column(ratelimits.upload_bps))
+        .bind(bps_to_column(ratelimits.download_bps))
+        .bind::<i32>(id.try_into()?)
             .execute(&self.pool)
             .await
             .context("error executing UPDATE torrents")?;

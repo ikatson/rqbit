@@ -87,7 +87,6 @@ use crate::{
     Error,
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
     file_ops::FileOps,
-    limits::Limits,
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
@@ -213,7 +212,6 @@ pub struct TorrentStateLive {
         tokio::sync::mpsc::UnboundedSender<WriterRequest>,
         ChunkInfo,
     )>,
-    ratelimits: Limits,
 }
 
 impl TorrentStateLive {
@@ -263,7 +261,6 @@ impl TorrentStateLive {
             tokio::sync::mpsc::UnboundedSender<WriterRequest>,
             ChunkInfo,
         )>();
-        let ratelimits = Limits::new(paused.shared.options.ratelimits);
 
         let state = Arc::new(TorrentStateLive {
             shared: paused.shared.clone(),
@@ -302,7 +299,6 @@ impl TorrentStateLive {
                 .map(|_| RwLock::new(()))
                 .collect(),
             ratelimit_upload_tx,
-            ratelimits,
         });
 
         state.spawn(
@@ -452,7 +448,7 @@ impl TorrentStateLive {
                 _ = tx.closed() => {
                     continue;
                 }
-                res = self.ratelimits.prepare_for_upload(NonZeroU32::new(ci.size).unwrap()) => {
+                res = self.shared.options.ratelimits.prepare_for_upload(NonZeroU32::new(ci.size).unwrap()) => {
                     res?;
                 }
             };
@@ -1701,6 +1697,8 @@ impl PeerHandler {
                 aframe!(self.wait_for_request_slot()).await;
 
                 self.state
+                    .shared
+                    .options
                     .ratelimits
                     .prepare_for_download(NonZeroU32::new(request.length).unwrap())
                     .await?;
