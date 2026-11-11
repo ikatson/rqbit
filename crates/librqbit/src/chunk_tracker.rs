@@ -36,6 +36,10 @@ pub struct ChunkTracker {
     // The effective priority level of every piece.
     levels: PieceLevels,
 
+    // How many queued pieces there are of each level (index = level). Lets the picker tell
+    // the highest level it can still find without scanning the queue.
+    queued_per_level: [u32; 8],
+
     // How many bytes do we have per each file.
     per_file_bytes: Vec<u64>,
 
@@ -166,14 +170,38 @@ impl ChunkTracker {
             queue_pieces: needed_pieces,
             selected: selected_pieces,
             levels,
+            queued_per_level: [0; 8],
             lengths,
             have: have_pieces,
             hns: HaveNeededSelected::default(),
             per_file_bytes: vec![0; file_infos.len()],
         };
         ct.recalculate_per_file_bytes(file_infos);
+        ct.recount_queued();
         ct.hns = ct.calc_hns();
         Ok(ct)
+    }
+
+    fn recount_queued(&mut self) {
+        self.queued_per_level = [0; 8];
+        for p in self.queue_pieces.iter_ones() {
+            let level = usize::from(self.levels.get(p)).min(7);
+            self.queued_per_level[level] += 1;
+        }
+    }
+
+    // Puts a piece in the queue or takes it out, keeping the per-level counts in step.
+    fn set_queued(&mut self, id: usize, queued: bool) {
+        if self.queue_pieces.get(id).is_none_or(|b| *b == queued) {
+            return;
+        }
+        self.queue_pieces.set(id, queued);
+        let count = &mut self.queued_per_level[usize::from(self.levels.get(id)).min(7)];
+        *count = if queued {
+            count.saturating_add(1)
+        } else {
+            count.saturating_sub(1)
+        };
     }
 
     fn recalculate_per_file_bytes(&mut self, file_infos: &FileInfos) {
@@ -203,7 +231,7 @@ impl ChunkTracker {
     }
 
     pub fn reserve_needed_piece(&mut self, index: ValidPieceIndex) {
-        self.queue_pieces.set(index.get() as usize, false)
+        self.set_queued(index.get() as usize, false)
     }
 
     pub fn get_hns(&self) -> &HaveNeededSelected {
@@ -230,6 +258,14 @@ impl ChunkTracker {
         &self.queue_pieces
     }
 
+    /// The highest level of a queued piece, 0 when the queue is empty.
+    pub(crate) fn queued_top(&self) -> u8 {
+        (1..=7u8)
+            .rev()
+            .find(|l| self.queued_per_level[usize::from(*l)] > 0)
+            .unwrap_or(0)
+    }
+
     pub(crate) fn is_piece_have(&self, id: ValidPieceIndex) -> bool {
         self.have.as_slice()[id.get() as usize]
     }
@@ -249,7 +285,7 @@ impl ChunkTracker {
         }
         debug!("marking piece={} as broken", index);
         let selected = self.selected.get(index.get() as usize).is_some_and(|b| *b);
-        self.queue_pieces.set(index.get() as usize, selected);
+        self.set_queued(index.get() as usize, selected);
         if let Some(s) = self.chunk_status.get_mut(self.lengths.chunk_range(index)) {
             s.fill(false);
         }
@@ -261,7 +297,7 @@ impl ChunkTracker {
         // anything that queues "selected and not have" - set_piece_levels() re-selecting
         // its file - queued it. A piece we have is not one a peer should be handed, so
         // whatever queued it in that window is undone here.
-        self.queue_pieces.set(id, false);
+        self.set_queued(id, false);
         if !self.have.as_slice()[id] {
             self.have.as_slice_mut().set(id, true);
             let len = self.lengths.piece_length(idx) as u64;
@@ -348,6 +384,8 @@ impl ChunkTracker {
         // queued, so this is "queue = queue & selected".
         let selected = self.selected.clone();
         self.queue_pieces &= selected;
+        // The levels of queued pieces changed too, not only which pieces are queued.
+        self.recount_queued();
 
         self.hns = self.calc_hns();
         Ok(self.hns)

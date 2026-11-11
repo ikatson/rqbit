@@ -145,7 +145,9 @@ struct OrderedFile {
 pub(crate) struct PiecePicker {
     options: PiecePicking,
     lengths: Lengths,
-    // Non-padding files sorted by name: the order sequential mode downloads them in.
+    // Non-padding files in the order sequential mode downloads them: the wanted ones (level
+    // above 0) by name, then the others by name. The others only hold queued pieces through a
+    // piece override, and a piece they share with a wanted file keeps its place in that file.
     files: Vec<OrderedFile>,
     // The pieces "first and last pieces first" puts ahead of the rest. None when it's off.
     edge_pieces: Option<BF>,
@@ -192,8 +194,9 @@ impl PiecePicker {
             .filter(|(_, fi)| !fi.attrs.padding)
             .map(|(id, fi)| (fi, file_levels.get(id).is_some_and(|l| *l > 0)))
             .collect();
-        // By name, as many torrents list their files in no particular order.
-        files.sort_by(|a, b| a.0.relative_filename.cmp(&b.0.relative_filename));
+        // Wanted files first, each group by name, as many torrents list their files in no
+        // particular order.
+        files.sort_by(|a, b| (!a.1, &a.0.relative_filename).cmp(&(!b.1, &b.0.relative_filename)));
         self.files = files
             .into_iter()
             .map(|(fi, wanted)| OrderedFile {
@@ -231,20 +234,21 @@ impl PiecePicker {
 
     /// The next piece to ask this peer for, out of `queue` (queued: selected, not had, not in
     /// flight). `levels` is the priority of every piece: a higher level always goes first, and
-    /// the options above order the pieces inside one level. `have_bytes` is how much of the
-    /// torrent is verified.
+    /// the options above order the pieces inside one level. `queued_top` is the highest level
+    /// in `queue`. `have_bytes` is how much of the torrent is verified.
     pub fn pick(
         &self,
         queue: &BS,
         levels: &PieceLevels,
+        queued_top: u8,
         have_bytes: u64,
         availability: &PieceAvailability,
         peer_has_piece: impl Fn(usize) -> bool,
     ) -> Option<usize> {
-        // No piece is above `top`: a candidate there can't be beaten, so the walks stop at the
-        // first one. With a single level (the common case) that makes every walk below exactly
-        // as long as it is without priorities.
-        let top = levels.top();
+        // No queued piece is above `queued_top`: a candidate there can't be beaten, so the walks
+        // stop at the first one. With a single level queued (the common case) that makes every
+        // walk below exactly as long as it is without priorities.
+        let top = queued_top;
         // The best candidate so far. Each step only takes a piece whose level is above it (level
         // 0 is never taken), so a piece found earlier wins inside its level.
         let mut best: Option<(u8, usize)> = None;
@@ -337,6 +341,11 @@ mod tests {
         u64::from(pieces) * u64::from(PIECE)
     }
 
+    // The highest level in `queue`, as ChunkTracker counts it.
+    fn top(queue: &BF, lv: &PieceLevels) -> u8 {
+        queue.iter_ones().map(|p| lv.get(p)).max().unwrap_or(0)
+    }
+
     // Every piece normal.
     fn flat(pieces: u32) -> PieceLevels {
         PieceLevels::new(vec![1u8; pieces as usize].into_boxed_slice())
@@ -377,19 +386,19 @@ mod tests {
         let queue = all_queued(8);
         // Piece 7 is the rarest overall.
         assert_eq!(
-            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(8), &avail, |_| true),
             Some(7)
         );
         // The peer doesn't have 7 or 6: 5 is the rarest it has.
         assert_eq!(
-            picker.pick(&queue, &lv, settled(8), &avail, |p| p < 6),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(8), &avail, |p| p < 6),
             Some(5)
         );
         // Not queued (in flight / had) pieces are skipped.
         let mut queue = queue;
         queue.set(7, false);
         assert_eq!(
-            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(8), &avail, |_| true),
             Some(6)
         );
     }
@@ -420,7 +429,7 @@ mod tests {
                     &files,
                     &normal_files(&files),
                 )
-                .pick(&queue, &lv, settled(64), &avail, |_| true)
+                .pick(&queue, &lv, top(&queue, &lv), settled(64), &avail, |_| true)
             })
             .collect();
         assert!(firsts.len() > 1, "every picker started on the same piece");
@@ -446,7 +455,7 @@ mod tests {
                     &files,
                     &normal_files(&files),
                 )
-                .pick(&queue, &lv, 0, &avail, |_| true)
+                .pick(&queue, &lv, top(&queue, &lv), 0, &avail, |_| true)
             })
             .collect();
         assert!(picked.len() > 1, "initial picks followed availability");
@@ -457,7 +466,7 @@ mod tests {
             &normal_files(&files),
         );
         assert_eq!(
-            picker.pick(&queue, &lv, settled(64), &avail, |_| true),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(64), &avail, |_| true),
             Some(10)
         );
     }
@@ -475,21 +484,21 @@ mod tests {
         let avail = PieceAvailability::new(8);
         let mut queue = all_queued(8);
         assert_eq!(
-            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(8), &avail, |_| true),
             Some(4)
         );
         queue.set(4, false);
         assert_eq!(
-            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(8), &avail, |_| true),
             Some(5)
         );
         assert_eq!(
-            picker.pick(&queue, &lv, settled(8), &avail, |p| p < 4),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(8), &avail, |p| p < 4),
             Some(0)
         );
         queue[4..8].fill(false);
         assert_eq!(
-            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(8), &avail, |_| true),
             Some(0)
         );
     }
@@ -507,11 +516,11 @@ mod tests {
         // Even if the queue still holds a piece of "a", a level 0 piece is never picked.
         let queue = all_queued(8);
         assert_eq!(
-            picker.pick(&queue, &lv, settled(8), &avail, |_| true),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(8), &avail, |_| true),
             Some(4)
         );
         assert_eq!(
-            picker.pick(&queue, &lv, settled(8), &avail, |p| p < 4),
+            picker.pick(&queue, &lv, top(&queue, &lv), settled(8), &avail, |p| p < 4),
             None
         );
     }
@@ -533,7 +542,9 @@ mod tests {
         }
         let mut queue = all_queued(250);
         let mut order = Vec::new();
-        while let Some(p) = picker.pick(&queue, &lv, settled(250), &avail, |_| true) {
+        while let Some(p) = picker.pick(&queue, &lv, top(&queue, &lv), settled(250), &avail, |_| {
+            true
+        }) {
             if order.len() == 6 {
                 break;
             }
@@ -543,7 +554,9 @@ mod tests {
         assert_eq!(order, vec![0, 1, 2, 247, 248, 249]);
         // Then back to rarest first, i.e. not piece 3 just because it's next.
         let next = picker
-            .pick(&queue, &lv, settled(250), &avail, |_| true)
+            .pick(&queue, &lv, top(&queue, &lv), settled(250), &avail, |_| {
+                true
+            })
             .unwrap();
         assert!((3..247).contains(&next));
     }
@@ -576,7 +589,9 @@ mod tests {
     ) -> Vec<usize> {
         let mut queue = all_queued(pieces);
         let mut order = Vec::new();
-        while let Some(p) = picker.pick(&queue, lv, settled(pieces), avail, |_| true) {
+        while let Some(p) = picker.pick(&queue, lv, top(&queue, lv), settled(pieces), avail, |_| {
+            true
+        }) {
             order.push(p);
             queue.set(p, false);
         }
@@ -725,7 +740,7 @@ mod tests {
                 let avail = PieceAvailability::new(8);
                 // The queue says every piece is wanted; the levels say none is.
                 assert_eq!(
-                    picker.pick(&all_queued(8), &lv, settled(8), &avail, |_| true),
+                    picker.pick(&all_queued(8), &lv, 0, settled(8), &avail, |_| true),
                     None
                 );
             }
@@ -739,8 +754,54 @@ mod tests {
         let picker = PiecePicker::new(PiecePicking::default(), lengths(8), &files, &[1, 7]);
         let avail = PieceAvailability::new(8);
         let p = picker
-            .pick(&all_queued(8), &lv, settled(8), &avail, |p| p < 4)
+            .pick(&all_queued(8), &lv, 7, settled(8), &avail, |p| p < 4)
             .unwrap();
         assert!(p < 4);
+    }
+
+    #[test]
+    fn a_boundary_piece_keeps_its_place_in_the_wanted_file() {
+        // "b" (pieces 0..6) is wanted; "a", skipped, shares b's last piece. By name "a" comes
+        // first, but the shared piece is walked as the tail of "b", as without priorities.
+        let files: FileInfos = vec![file("b", 0, 6), file("a", 5, 1)];
+        let lv = levels(&files, 6, &[1, 0], &[]);
+        let picker = PiecePicker::new(
+            PiecePicking {
+                sequential: true,
+                ..Default::default()
+            },
+            lengths(6),
+            &files,
+            &[1, 0],
+        );
+        let avail = PieceAvailability::new(6);
+        assert_eq!(drain(&picker, 6, &lv, &avail), vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn sequential_stops_at_the_first_piece_of_the_highest_queued_level() {
+        // "a" is at maximum and done (not queued); "b" is normal. The walk stops at the first
+        // piece of "b" instead of looking further for a level that is no longer queued.
+        let files: FileInfos = vec![file("a", 0, 4), file("b", 4, 60)];
+        let lv = levels(&files, 64, &[7, 1], &[]);
+        let picker = PiecePicker::new(
+            PiecePicking {
+                sequential: true,
+                ..Default::default()
+            },
+            lengths(64),
+            &files,
+            &[7, 1],
+        );
+        let avail = PieceAvailability::new(64);
+        let mut queue = all_queued(64);
+        queue[..4].fill(false);
+        let asked = std::cell::Cell::new(0);
+        let picked = picker.pick(&queue, &lv, top(&queue, &lv), settled(64), &avail, |_| {
+            asked.set(asked.get() + 1);
+            true
+        });
+        assert_eq!(picked, Some(4));
+        assert_eq!(asked.get(), 1);
     }
 }

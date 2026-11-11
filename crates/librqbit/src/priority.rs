@@ -121,7 +121,6 @@ impl Priorities {
         file_priorities: Option<&[u8]>,
         piece_priorities: Option<&[(u32, u8)]>,
     ) -> anyhow::Result<Self> {
-        let mut p = Self::new(file_infos);
         if let Some(levels) = file_priorities {
             if levels.len() > file_infos.len() {
                 bail!(
@@ -131,9 +130,63 @@ impl Priorities {
                 );
             }
             for (idx, level) in levels.iter().copied().enumerate() {
-                let level = validate(level).with_context(|| format!("priority of file {idx}"))?;
-                p.set_file(file_infos, idx, level);
+                validate(level).with_context(|| format!("priority of file {idx}"))?;
             }
+        }
+        for (piece, level) in piece_priorities.unwrap_or_default().iter().copied() {
+            if piece >= total_pieces {
+                bail!("piece {piece} does not exist, the torrent has {total_pieces} pieces");
+            }
+            validate(level).with_context(|| format!("priority of piece {piece}"))?;
+        }
+        Ok(Self::from_valid_options(
+            file_infos,
+            only_files,
+            file_priorities,
+            piece_priorities.unwrap_or_default(),
+        ))
+    }
+
+    /// Like [`Priorities::from_options`], but what doesn't fit the torrent is dropped instead of
+    /// failing: a `file_priorities` list that is too long or holds a level out of range is
+    /// ignored as a whole (so `only_files` alone decides, rather than the other files' levels
+    /// shifting), and bad piece overrides are dropped one by one. For restoring a stored
+    /// torrent, whose store may have been edited by hand or damaged.
+    pub fn from_options_lossy(
+        file_infos: &FileInfos,
+        total_pieces: u32,
+        only_files: Option<&[usize]>,
+        file_priorities: Option<&[u8]>,
+        piece_priorities: Option<&[(u32, u8)]>,
+    ) -> Self {
+        let file_priorities = file_priorities.filter(|levels| {
+            levels.len() <= file_infos.len() && levels.iter().all(|l| validate(*l).is_ok())
+        });
+        let pieces: Vec<(u32, u8)> = piece_priorities
+            .unwrap_or_default()
+            .iter()
+            .copied()
+            .filter(|(piece, level)| *piece < total_pieces && validate(*level).is_ok())
+            .collect();
+        Self::from_valid_options(file_infos, only_files, file_priorities, &pieces)
+    }
+
+    // `from_options` once its input is checked: levels in range, as many file levels as files
+    // at most, piece indices below the piece count.
+    fn from_valid_options(
+        file_infos: &FileInfos,
+        only_files: Option<&[usize]>,
+        file_priorities: Option<&[u8]>,
+        piece_priorities: &[(u32, u8)],
+    ) -> Self {
+        let mut p = Self::new(file_infos);
+        for (idx, level) in file_priorities
+            .unwrap_or_default()
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            p.set_file(file_infos, idx, level);
         }
         if let Some(only_files) = only_files {
             let selected: HashSet<usize> = only_files.iter().copied().collect();
@@ -145,16 +198,8 @@ impl Priorities {
                 }
             }
         }
-        if let Some(pieces) = piece_priorities {
-            p.set_pieces(
-                total_pieces,
-                &pieces
-                    .iter()
-                    .map(|(piece, level)| (*piece, Some(*level)))
-                    .collect::<Vec<_>>(),
-            )?;
-        }
-        Ok(p)
+        p.pieces.extend(piece_priorities.iter().copied());
+        p
     }
 
     fn set_file(&mut self, file_infos: &FileInfos, idx: usize, level: u8) {
@@ -290,17 +335,11 @@ fn is_padding(file_infos: &FileInfos, idx: usize) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PieceLevels {
     levels: Box<[u8]>,
-    // Bit n is set when at least one piece has level n, for n in 1..=7.
-    present: u8,
 }
 
 impl PieceLevels {
     pub fn new(levels: Box<[u8]>) -> Self {
-        let present = levels
-            .iter()
-            .filter(|l| **l > 0)
-            .fold(0u8, |acc, l| acc | (1u8 << (*l).min(7)));
-        Self { levels, present }
+        Self { levels }
     }
 
     /// How many pieces there are.
@@ -311,16 +350,6 @@ impl PieceLevels {
     /// The level of a piece; 0 for an index past the end.
     pub fn get(&self, piece: usize) -> u8 {
         self.levels.get(piece).copied().unwrap_or(0)
-    }
-
-    /// The highest level any piece has, 0 when nothing is wanted.
-    pub fn top(&self) -> u8 {
-        if self.present == 0 {
-            0
-        } else {
-            // `present` only has bits 1..=7, so this is at most 7.
-            7u8.saturating_sub(u8::try_from(self.present.leading_zeros()).unwrap_or(7))
-        }
     }
 
     /// One level per piece.
@@ -347,7 +376,7 @@ mod tests {
 
     use librqbit_core::{lengths::Lengths, torrent_metainfo::FileDetailsAttrs};
 
-    use super::{PieceLevels, Priorities, Priority};
+    use super::{Priorities, Priority};
     use crate::{file_info::FileInfo, type_aliases::FileInfos};
 
     const PIECE: u32 = 16384;
@@ -477,9 +506,24 @@ mod tests {
     }
 
     #[test]
-    fn top_level() {
-        assert_eq!(PieceLevels::new(vec![0, 0].into()).top(), 0);
-        assert_eq!(PieceLevels::new(vec![1, 0, 1].into()).top(), 1);
-        assert_eq!(PieceLevels::new(vec![1, 7, 6].into()).top(), 7);
+    fn restoring_keeps_what_still_fits() {
+        let (fi, l) = files(&[(10, false), (10, false), (10, false)]);
+        let total = l.total_pieces();
+        // A list that is too long, or holds a level out of range, is dropped as a whole, so
+        // `only_files` decides.
+        for bad in [&[7, 6, 1, 1][..], &[7, 8]] {
+            let p = Priorities::from_options_lossy(&fi, total, Some(&[0, 2]), Some(bad), None);
+            assert_eq!(p.files(), &[1, 0, 1]);
+        }
+        // Bad piece entries are dropped one by one.
+        let p = Priorities::from_options_lossy(
+            &fi,
+            total,
+            None,
+            Some(&[7]),
+            Some(&[(0, 9), (0, 0), (5, 1)]),
+        );
+        assert_eq!(p.files(), &[7, 1, 1]);
+        assert_eq!(p.piece_overrides().collect::<Vec<_>>(), vec![(0, 0)]);
     }
 }

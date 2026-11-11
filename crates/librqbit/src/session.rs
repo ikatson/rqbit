@@ -1340,14 +1340,27 @@ impl Session {
             }));
         }
 
-        let priorities = Priorities::from_options(
-            &metadata.file_infos,
-            metadata.lengths().total_pieces(),
-            only_files.as_deref(),
-            opts.file_priorities.as_deref(),
-            opts.piece_priorities.as_deref(),
-        )
-        .context("invalid priorities")?;
+        let priorities = if opts.preferred_id.is_some() {
+            // Restoring from the session store. Its priorities were valid when written, so a
+            // bad value means a damaged or hand-edited store: keep what still fits rather than
+            // lose the torrent.
+            Priorities::from_options_lossy(
+                &metadata.file_infos,
+                metadata.lengths().total_pieces(),
+                only_files.as_deref(),
+                opts.file_priorities.as_deref(),
+                opts.piece_priorities.as_deref(),
+            )
+        } else {
+            Priorities::from_options(
+                &metadata.file_infos,
+                metadata.lengths().total_pieces(),
+                only_files.as_deref(),
+                opts.file_priorities.as_deref(),
+                opts.piece_priorities.as_deref(),
+            )
+            .context("invalid priorities")?
+        };
 
         let storage_factory = opts
             .storage_factory
