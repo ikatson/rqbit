@@ -3,6 +3,7 @@ mod e2e_another_local_client;
 mod e2e_connect_rate;
 mod e2e_handshake_timeout;
 mod e2e_have;
+mod e2e_i2p;
 mod e2e_padded_files;
 mod e2e_peer_backoff;
 mod e2e_proxy;

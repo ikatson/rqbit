@@ -307,9 +307,7 @@ impl Tracker {
             clearnet: false, ..
         } = i2p
         {
-            skipped = Some(
-                "a clearnet tracker of an I2P torrent, skipped: I2P mixed mode is off".to_owned(),
-            );
+            skipped = Some(i2p::I2P_CLEARNET_SKIPPED.to_owned());
         }
         let scrapable = skipped.is_none()
             && match kind {

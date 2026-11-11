@@ -57,6 +57,11 @@ pub enum I2pTrackers {
 /// The error of the `.i2p` trackers when the session has no I2P.
 pub const I2P_NOT_ENABLED: &str = "an I2P tracker, but I2P is not enabled in the session";
 
+/// The error of the clearnet trackers of an I2P torrent when mixed mode is off: they are
+/// skipped, the torrent stays inside I2P.
+pub const I2P_CLEARNET_SKIPPED: &str =
+    "a clearnet tracker of an I2P torrent, skipped: I2P mixed mode is off";
+
 impl Default for I2pTrackers {
     fn default() -> Self {
         Self::Off(I2P_NOT_ENABLED)

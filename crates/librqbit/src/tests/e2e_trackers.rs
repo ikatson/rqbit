@@ -55,7 +55,7 @@ impl Announce {
     }
 }
 
-fn percent_decode(s: &str) -> Vec<u8> {
+pub(super) fn percent_decode(s: &str) -> Vec<u8> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;

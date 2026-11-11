@@ -20,8 +20,6 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) mod book;
 #[cfg(test)]
-// Parts of the fake bridge (command log, services) are for the session-level e2e tests.
-#[allow(dead_code)]
 pub(crate) mod fake_bridge;
 #[cfg(test)]
 mod fake_bridge_tests;
