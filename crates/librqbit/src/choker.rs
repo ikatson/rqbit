@@ -133,6 +133,9 @@ enum SlotKind {
 struct Slot {
     kind: SlotKind,
     since: Instant,
+    // Bytes sent to the peer when it got the slot. What it got before, while choked (the
+    // allowed-fast pieces of the Fast Extension, BEP 6), is not the rate of the slot.
+    up_mark: u64,
 }
 
 struct Entry {
@@ -218,7 +221,11 @@ impl Inner {
         match &mut e.slot {
             Some(slot) => slot.kind = kind,
             None => {
-                e.slot = Some(Slot { kind, since: now });
+                e.slot = Some(Slot {
+                    kind,
+                    since: now,
+                    up_mark: e.peer.transferred().up,
+                });
                 e.peer.set_choked(false);
             }
         }
@@ -275,7 +282,8 @@ impl Inner {
             // must not put it ahead of the peers that never had one.
             e.up_rate = e.slot.map_or(0, |slot| {
                 rate(
-                    total.up.saturating_sub(e.mark.up),
+                    // The later of the two marks: the round's start or the slot's.
+                    total.up.saturating_sub(e.mark.up.max(slot.up_mark)),
                     now.saturating_duration_since(round_start.max(slot.since)),
                 )
             });
@@ -660,6 +668,25 @@ mod tests {
         }
         assert_eq!(s.unchoked(), [0, 1]);
         assert!(s.sent(2).is_empty());
+    }
+
+    #[test]
+    fn bytes_sent_before_the_slot_do_not_count_for_its_rate() {
+        let mut s = Swarm::fixed(1);
+        let p = s.connect(0);
+        // Allowed-fast pieces (BEP 6) served while the peer had no slot.
+        s.uploaded(p, 1000 * KIB);
+        s.interested(p, true, 5);
+        assert_eq!(s.unchoked(), [p]);
+        s.uploaded(p, 10 * KIB);
+        s.rechoke(10);
+        let id = s.peers[p].1.as_ref().unwrap().id;
+        let up_rate = s.choker.inner.lock().peers[&id].up_rate;
+        assert_eq!(
+            up_rate,
+            10 * KIB / 5,
+            "the 5 seconds of the slot, not the choke"
+        );
     }
 
     #[test]
