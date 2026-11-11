@@ -1,4 +1,5 @@
 use std::{
+    io::ErrorKind,
     net::{Ipv6Addr, SocketAddr},
     sync::Arc,
 };
@@ -8,7 +9,7 @@ use librqbit_dualstack_sockets::{BindOpts, TcpListener};
 use librqbit_utp::{BindDevice, UtpSocketUdp, UtpSocketUdpOpts};
 use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{stream_connect::ConnectionKind, vectored_traits::AsyncReadVectored};
 
@@ -86,7 +87,7 @@ impl ListenerOptions {
         utp_opts.parent_span = parent_span;
         utp_opts.dont_wait_for_lastack = true;
 
-        let mut listen_addr = if self.ipv4_only {
+        let requested_addr = if self.ipv4_only {
             if self.listen_addr.is_ipv6() && self.listen_addr.ip().is_unspecified() {
                 // Force to IPv4 unspecified if IPv6 unspecified was requested but we are v4 only
                 SocketAddr::from(([0, 0, 0, 0], self.listen_addr.port()))
@@ -97,54 +98,75 @@ impl ListenerOptions {
             self.listen_addr
         };
 
-        let tcp_socket = if self.mode.tcp_enabled() {
-            let listener = TcpListener::bind_tcp(
-                listen_addr,
-                BindOpts {
-                    request_dualstack: !self.ipv4_only,
-                    reuseport: false,
-                    device: bind_device,
-                },
-            )
-            .context("error starting TCP listener")?;
-            listen_addr = listener.bind_addr();
+        // With any port asked for (port 0), uTP listens on the port the system picked for TCP,
+        // which may already be taken over UDP. Then both pick again, rather than lose uTP to bad
+        // luck.
+        let may_pick_again =
+            requested_addr.port() == 0 && self.mode.tcp_enabled() && self.mode.utp_enabled();
+        let mut picks = 1;
+        let (tcp_socket, utp_socket, listen_addr) = loop {
+            let mut listen_addr = requested_addr;
+            let tcp_socket = if self.mode.tcp_enabled() {
+                let listener = TcpListener::bind_tcp(
+                    listen_addr,
+                    BindOpts {
+                        request_dualstack: !self.ipv4_only,
+                        reuseport: false,
+                        device: bind_device,
+                    },
+                )
+                .context("error starting TCP listener")?;
+                listen_addr = listener.bind_addr();
+                Some(listener)
+            } else {
+                None
+            };
+
+            let utp_socket = if self.mode.utp_enabled() {
+                let bind_result = UtpSocketUdp::new_udp_with_opts(
+                    listen_addr,
+                    utp_opts.clone(),
+                    UtpSocketUdpOpts { bind_device },
+                )
+                .await;
+                match bind_result {
+                    Ok(sock) => {
+                        listen_addr = sock.bind_addr();
+                        Some(sock)
+                    }
+                    Err(e)
+                        if may_pick_again && picks < MAX_PORT_PICKS && is_addr_in_use(&e) =>
+                    {
+                        debug!("UDP {listen_addr:?} is taken, picking another port");
+                        picks += 1;
+                        continue;
+                    }
+                    Err(e) if tcp_socket.is_some() => {
+                        // If we listen over TCP, it's not a fatal error if we can't listen over uTP.
+                        tracing::error!("Error listening on UDP {listen_addr:?}: {e:#}");
+                        None
+                    }
+                    Err(e) => {
+                        return Err(e.into());
+                    }
+                }
+            } else {
+                None
+            };
+            break (tcp_socket, utp_socket, listen_addr);
+        };
+        if tcp_socket.is_some() {
             info!(
                 "Listening on TCP {:?} for incoming peer connections",
                 listen_addr
             );
-            Some(listener)
-        } else {
-            None
-        };
-
-        let utp_socket = if self.mode.utp_enabled() {
-            let bind_result = UtpSocketUdp::new_udp_with_opts(
-                listen_addr,
-                utp_opts,
-                UtpSocketUdpOpts { bind_device },
-            )
-            .await;
-            match bind_result {
-                Ok(sock) => {
-                    listen_addr = sock.bind_addr();
-                    info!(
-                        "Listening on UDP {:?} for incoming uTP peer connections",
-                        listen_addr
-                    );
-                    Some(sock)
-                }
-                Err(e) if tcp_socket.is_some() => {
-                    // If we listen over TCP, it's not a fatal error if we can't listen over uTP.
-                    tracing::error!("Error listening on UDP {listen_addr:?}: {e:#}");
-                    None
-                }
-                Err(e) => {
-                    return Err(e.into());
-                }
-            }
-        } else {
-            None
-        };
+        }
+        if utp_socket.is_some() {
+            info!(
+                "Listening on UDP {:?} for incoming uTP peer connections",
+                listen_addr
+            );
+        }
 
         let announce_port = if let Some(p) = self.announce_port {
             Some(p)
@@ -161,6 +183,20 @@ impl ListenerOptions {
             enable_upnp_port_forwarding: self.enable_upnp_port_forwarding,
             max_pending_incoming_handshake_checks: self.max_pending_incoming_handshake_checks,
         })
+    }
+}
+
+/// How many ports a listener on any port tries for both TCP and uTP before it gives up uTP.
+const MAX_PORT_PICKS: u32 = 16;
+
+/// Whether binding a uTP socket failed because its UDP port is taken.
+fn is_addr_in_use(e: &librqbit_utp::Error) -> bool {
+    match e {
+        librqbit_utp::Error::Dualstack(e) => matches!(
+            &**e,
+            librqbit_dualstack_sockets::Error::Bind(e) if e.kind() == ErrorKind::AddrInUse
+        ),
+        _ => false,
     }
 }
 
