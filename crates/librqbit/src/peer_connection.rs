@@ -46,9 +46,15 @@ pub trait PeerConnectionHandler {
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
     /// Asked right before an accepted upload request is read from disk. `false` skips it: the
-    /// peer cancelled it while it was queued.
+    /// peer cancelled it, or was choked, while it was queued.
     fn should_upload_chunk(&self, _chunk: &ChunkInfo) -> bool {
         true
+    }
+    /// Asked when the peer sent nothing for the read timeout. `true` keeps the connection:
+    /// right now the peer has nothing to tell us, so only keep-alives are due
+    /// ([`SILENT_PEER_TIMEOUT`]).
+    fn may_be_silent(&self) -> bool {
+        false
     }
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
     fn update_my_extended_handshake(
@@ -120,6 +126,11 @@ pub(crate) async fn with_timeout<T>(
 ) -> crate::Result<T> {
     fut.await
 }
+
+/// How long a peer that has nothing to tell us ([`PeerConnectionHandler::may_be_silent`]) may
+/// send nothing at all before its connection is taken for dead. Clients send a keep-alive every
+/// two minutes or so (BEP 3).
+pub(crate) const SILENT_PEER_TIMEOUT: Duration = Duration::from_secs(300);
 
 struct ManagePeerArgs {
     handshake_supports_extended: bool,
@@ -344,15 +355,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 trace!("sent bitfield");
             }
 
-            let len = Message::Unchoke.serialize(&mut *write_buf, &Default::default)?;
-            with_timeout(
-                "writing",
-                rwtimeout,
-                write.write_all(&write_buf[..len]).map_err(Error::Write),
-            )
-            .await?;
-            trace!("sent unchoke");
-
             let mut broadcast_closed = false;
 
             loop {
@@ -484,8 +486,18 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         };
 
         let reader = async move {
+            let mut heard_at = Instant::now();
             loop {
-                let message = read_buf.read_message(&mut read, rwtimeout).await?;
+                let message = match read_buf.read_message(&mut read, rwtimeout).await {
+                    Err(Error::Timeout(_))
+                        if heard_at.elapsed() < SILENT_PEER_TIMEOUT
+                            && self.handler.may_be_silent() =>
+                    {
+                        continue;
+                    }
+                    r => r?,
+                };
+                heard_at = Instant::now();
                 trace!("received: {:?}", &message);
 
                 tokio::task::yield_now().await;

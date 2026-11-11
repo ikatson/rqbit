@@ -85,6 +85,7 @@ use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 
 use crate::{
     Error,
+    choker::{Choker, ChokerPeer, RECHOKE_INTERVAL, Registration, Transferred},
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
     file_ops::FileOps,
     limits::Limits,
@@ -212,6 +213,9 @@ pub struct TorrentStateLive {
 
     ratelimit_upload_tx: UnboundedSender<UploadRequest>,
     ratelimits: Limits,
+
+    // Decides which interested peers we upload to.
+    choker: Arc<Choker>,
 }
 
 impl TorrentStateLive {
@@ -298,6 +302,10 @@ impl TorrentStateLive {
                 .collect(),
             ratelimit_upload_tx,
             ratelimits,
+            choker: Arc::new(Choker::new(
+                paused.shared.options.upload_slots,
+                Instant::now(),
+            )),
         });
 
         state.spawn(
@@ -340,6 +348,12 @@ impl TorrentStateLive {
             debug_span!(parent: state.shared.span.clone(), "upload_scheduler"),
             format!("[{}]upload_scheduler", state.shared.id),
             state.clone().task_upload_scheduler(ratelimit_upload_rx),
+        );
+
+        state.spawn(
+            debug_span!(parent: state.shared.span.clone(), "choker"),
+            format!("[{}]choker", state.shared.id),
+            Self::task_choker(state.choker.clone()),
         );
         Ok(state)
     }
@@ -445,7 +459,8 @@ impl TorrentStateLive {
             gate,
         }) = rx.recv().await
         {
-            // The peer may have cancelled it while it was queued.
+            // The peer may have cancelled it, or we may have choked the peer, while it was
+            // queued.
             if !gate.keep(&ci) {
                 continue;
             }
@@ -476,6 +491,33 @@ impl TorrentStateLive {
         Ok(())
     }
 
+    // Hands out the upload slots at the interval. A slot that frees up in between is given
+    // away when it happens, see `Choker`.
+    async fn task_choker(choker: Arc<Choker>) -> crate::Result<()> {
+        loop {
+            tokio::time::sleep(RECHOKE_INTERVAL).await;
+            choker.rechoke(Instant::now());
+        }
+    }
+
+    // The upload side of a new connection: its gate, and its place in the choker.
+    fn upload_side(
+        &self,
+        tx: &PeerTx,
+        counters: &Arc<AtomicPeerCounters>,
+    ) -> (Arc<UploadGate>, Registration) {
+        let gate = Arc::<UploadGate>::default();
+        let registration = self.choker.add(
+            Arc::new(PeerUpload {
+                tx: tx.clone(),
+                gate: gate.clone(),
+                counters: counters.clone(),
+            }),
+            Instant::now(),
+        );
+        (gate, registration)
+    }
+
     async fn task_manage_incoming_peer(
         self: Arc<Self>,
         checked_peer: CheckedIncomingConnection,
@@ -484,6 +526,7 @@ impl TorrentStateLive {
         rx: PeerRx,
         permit: OwnedSemaphorePermit,
     ) -> crate::Result<()> {
+        let (upload_gate, choker) = self.upload_side(&tx, &counters);
         let handler = PeerHandler {
             addr: checked_peer.addr,
             incoming: true,
@@ -492,7 +535,8 @@ impl TorrentStateLive {
             state: self.clone(),
             tx,
             counters,
-            upload_gate: Default::default(),
+            upload_gate,
+            choker,
             first_message_received: AtomicBool::new(false),
             cancel_token: self.cancellation_token.child_token(),
             client_name_and_version: self.shared.client_name_and_version().to_owned(),
@@ -549,6 +593,7 @@ impl TorrentStateLive {
             .with_peer(addr, |p| p.stats.counters.clone())
             .ok_or(Error::BugPeerNotFound)?;
 
+        let (upload_gate, choker) = state.upload_side(&tx, &counters);
         let handler = PeerHandler {
             addr,
             incoming: false,
@@ -557,7 +602,8 @@ impl TorrentStateLive {
             state: state.clone(),
             tx,
             counters,
-            upload_gate: Default::default(),
+            upload_gate,
+            choker,
             first_message_received: AtomicBool::new(false),
             cancel_token: state.cancellation_token.child_token(),
             client_name_and_version: state.shared.client_name_and_version().to_owned(),
@@ -1027,6 +1073,38 @@ impl PeerFlowControl {
     }
 }
 
+// What the choker needs of a connection.
+struct PeerUpload {
+    tx: PeerTx,
+    gate: Arc<UploadGate>,
+    counters: Arc<AtomicPeerCounters>,
+}
+
+impl ChokerPeer for PeerUpload {
+    fn set_choked(&self, choked: bool) {
+        // The gate first: once the peer reads the message, our side has to agree with it.
+        self.gate.set_choked(choked);
+        let msg = if choked {
+            Message::Choke
+        } else {
+            Message::Unchoke
+        };
+        if self.tx.send(WriterRequest::Message(msg)).is_err() {
+            trace!(
+                "peer is gone, not sending {}",
+                if choked { "choke" } else { "unchoke" }
+            );
+        }
+    }
+
+    fn transferred(&self) -> Transferred {
+        Transferred {
+            down: self.counters.fetched_bytes.load(Ordering::Relaxed),
+            up: self.counters.uploaded_bytes.load(Ordering::Relaxed),
+        }
+    }
+}
+
 // All peer state that would never be used by other actors should pe put here.
 // This state tracks a live peer.
 struct PeerHandler {
@@ -1049,6 +1127,8 @@ struct PeerHandler {
 
     // Upload requests of this connection that wait to be served, and the cancelled ones.
     upload_gate: Arc<UploadGate>,
+    // The connection's place in the queue for an upload slot. Gives the slot back when dropped.
+    choker: Registration,
 
     first_message_received: AtomicBool,
 
@@ -1096,9 +1176,7 @@ impl PeerConnectionHandler for &'_ PeerHandler {
                 trace!("keepalive received");
             }
             Message::Have(h) => self.on_have(h),
-            Message::NotInterested => {
-                trace!("received \"not interested\", but we don't process it yet")
-            }
+            Message::NotInterested => self.on_peer_not_interested(),
             Message::Cancel(cancel) => self.on_cancel(cancel),
             Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Request(
                 metadata_piece_id,
@@ -1155,6 +1233,21 @@ impl PeerConnectionHandler for &'_ PeerHandler {
 
     fn should_upload_chunk(&self, chunk: &ChunkInfo) -> bool {
         self.upload_gate.should_upload(chunk)
+    }
+
+    fn may_be_silent(&self) -> bool {
+        // Silence is a peer that does not deliver what we asked for. But a peer that waits
+        // for one of our upload slots has nothing to say, and neither has one we wait for.
+        if self.requested_inflight_count() != Some(0) {
+            return false;
+        }
+        let they_wait = self.choker.waits_for_slot();
+        if self.state.is_finished_and_no_active_streams() {
+            return they_wait;
+        }
+        // While we still look for peers to download from, a connection that does nothing is
+        // only kept for as long as no other peer could use it.
+        (they_wait || self.is_choked()) && self.state.peer_semaphore.available_permits() > 0
     }
 
     fn on_uploaded_bytes(&self, bytes: u32) {
@@ -1532,7 +1625,12 @@ impl PeerHandler {
             );
         }
 
-        self.upload_gate.register(block_key(&chunk_info));
+        if !self.upload_gate.register(block_key(&chunk_info)) {
+            // It either asked before our choke reached it, or it does not care. Without the
+            // fast extension there is no way to tell it "no": the request is just not served.
+            trace!(?request, "ignoring a request of a choked peer");
+            return Ok(());
+        }
         self.state.ratelimit_upload_tx.send(UploadRequest {
             tx: self.tx.clone(),
             chunk: chunk_info,
@@ -1780,6 +1878,16 @@ impl PeerHandler {
     fn on_peer_interested(&self) {
         trace!("peer is interested");
         self.state.peers.mark_peer_interested(self.addr, true);
+        // With uploads disabled nobody ever gets an upload slot.
+        if !self.state.torrent().options.disable_upload() {
+            self.choker.set_interested(true, Instant::now());
+        }
+    }
+
+    fn on_peer_not_interested(&self) {
+        trace!("peer is not interested");
+        self.state.peers.mark_peer_interested(self.addr, false);
+        self.choker.set_interested(false, Instant::now());
     }
 
     fn on_i_am_unchoked(&self) {

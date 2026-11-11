@@ -1,10 +1,10 @@
 //! Bookkeeping for the upload requests of one peer connection.
 //!
 //! An accepted request waits in the upload rate limiter's queue, and then in the connection's
-//! writer queue, before its block is read from disk and sent. A peer may cancel the request
-//! meanwhile (BEP 3 `cancel`); the block must then be neither read nor sent nor counted as
-//! uploaded. The gate remembers which requests are still waiting and which of them were
-//! cancelled.
+//! writer queue, before its block is read from disk and sent. Meanwhile the peer may cancel the
+//! request (BEP 3 `cancel`), or we may choke the peer, which drops everything it asked for; the
+//! block must then be neither read nor sent nor counted as uploaded. The gate remembers which
+//! requests are still waiting and which of them were cancelled.
 
 use std::{
     collections::HashMap,
@@ -36,26 +36,46 @@ struct Pending {
     // Sums over `blocks`.
     queued: u32,
     cancelled: u32,
+    // We unchoked the peer. A connection starts choked (BEP 3).
+    unchoked: bool,
 }
 
 /// Shared between the reader side of a connection (which registers requests and cancels), the
-/// upload scheduler and the writer.
+/// choker, the upload scheduler and the writer.
 #[derive(Default)]
 pub(crate) struct UploadGate {
-    // Copies of the sums in `pending`, so that the common case (nothing cancelled) is decided
-    // without taking the lock.
+    // Copies of the sums in `pending`, so that the common cases (nothing waits, nothing was
+    // cancelled) are decided without taking the lock.
     queued: AtomicU32,
     cancelled: AtomicU32,
     pending: Mutex<Pending>,
 }
 
 impl UploadGate {
-    /// A request for the block was accepted for upload.
-    pub fn register(&self, key: BlockKey) {
+    /// The peer asked for the block. `false`: the peer is choked, the request is ignored.
+    pub fn register(&self, key: BlockKey) -> bool {
         let mut g = self.pending.lock();
+        if !g.unchoked {
+            return false;
+        }
         g.blocks.entry(key).or_default().queued += 1;
         g.queued += 1;
         self.queued.store(g.queued, Ordering::Release);
+        true
+    }
+
+    /// We choke or unchoke the peer. A choke drops every request that waits: the peer asks
+    /// again once it is unchoked.
+    pub fn set_choked(&self, choked: bool) {
+        let mut g = self.pending.lock();
+        g.unchoked = !choked;
+        if choked {
+            g.blocks.clear();
+            g.queued = 0;
+            g.cancelled = 0;
+            self.queued.store(0, Ordering::Release);
+            self.cancelled.store(0, Ordering::Release);
+        }
     }
 
     /// The peer cancelled the block. Only cancels a request that is still waiting: one that
@@ -75,55 +95,52 @@ impl UploadGate {
         }
     }
 
-    fn is_cancelled(&self, key: &BlockKey) -> bool {
-        self.cancelled.load(Ordering::Acquire) > 0
-            && self
-                .pending
-                .lock()
-                .blocks
-                .get(key)
-                .is_some_and(|b| b.cancelled > 0)
-    }
-
     /// Takes one waiting request for the block out of the queue. Returns whether it has to be
-    /// served.
+    /// served: it does not when it was cancelled, or dropped by a choke.
     fn release(&self, key: BlockKey) -> bool {
         if self.queued.load(Ordering::Acquire) == 0 {
-            return true;
+            return false;
         }
         let mut g = self.pending.lock();
-        let mut cancelled = false;
-        if let Some(b) = g.blocks.get_mut(&key) {
-            b.queued -= 1;
-            if b.cancelled > 0 {
-                b.cancelled -= 1;
-                cancelled = true;
-            }
-            if b.queued == 0 {
-                g.blocks.remove(&key);
-            }
-            g.queued -= 1;
-            if cancelled {
-                g.cancelled -= 1;
-            }
-            self.queued.store(g.queued, Ordering::Release);
-            self.cancelled.store(g.cancelled, Ordering::Release);
+        let Some(b) = g.blocks.get_mut(&key) else {
+            return false;
+        };
+        b.queued -= 1;
+        let cancelled = b.cancelled > 0;
+        if cancelled {
+            b.cancelled -= 1;
+        }
+        if b.queued == 0 {
+            g.blocks.remove(&key);
+        }
+        g.queued -= 1;
+        if cancelled {
+            g.cancelled -= 1;
+        }
+        self.queued.store(g.queued, Ordering::Release);
+        self.cancelled.store(g.cancelled, Ordering::Release);
+        !cancelled
+    }
+
+    /// For the scheduler: `false` means the request is not to be served (and is released, if it
+    /// was cancelled).
+    pub fn keep(&self, chunk: &ChunkInfo) -> bool {
+        let key = block_key(chunk);
+        if self.queued.load(Ordering::Acquire) == 0 {
+            return false;
+        }
+        let cancelled = match self.pending.lock().blocks.get(&key) {
+            Some(b) => b.cancelled > 0,
+            None => return false,
+        };
+        if cancelled {
+            self.release(key);
         }
         !cancelled
     }
 
-    /// For the scheduler: `false` means the request was cancelled (and is released).
-    pub fn keep(&self, chunk: &ChunkInfo) -> bool {
-        let key = block_key(chunk);
-        if self.is_cancelled(&key) {
-            self.release(key);
-            return false;
-        }
-        true
-    }
-
     /// For the writer, right before it reads the block from disk: takes the request out of the
-    /// queue and tells whether it was cancelled meanwhile.
+    /// queue and tells whether it still has to be served.
     pub fn should_upload(&self, chunk: &ChunkInfo) -> bool {
         self.release(block_key(chunk))
     }
@@ -142,9 +159,55 @@ mod tests {
 
     use super::*;
 
+    fn unchoked() -> UploadGate {
+        let g = UploadGate::default();
+        g.set_choked(false);
+        g
+    }
+
+    #[test]
+    fn a_choked_peer_cannot_queue_requests() {
+        let g = UploadGate::default();
+        let k = (0, 0, 16384);
+        assert!(!g.register(k), "a connection starts choked");
+        assert!(!g.release(k));
+        g.set_choked(false);
+        assert!(g.register(k));
+        assert!(g.release(k));
+    }
+
+    #[test]
+    fn a_choke_drops_what_waits_and_a_block_asked_for_again_is_sent_once() {
+        let lengths = Lengths::new(100_000, 32 * 1024).unwrap();
+        let chunk = lengths
+            .chunk_info_from_received_data(lengths.validate_piece_index(0).unwrap(), 0, 16384)
+            .unwrap();
+        let k = block_key(&chunk);
+        let g = unchoked();
+        assert!(g.register(k));
+        assert!(g.register((1, 0, 16384)));
+        g.cancel((1, 0, 16384));
+        g.set_choked(true);
+        assert_eq!(g.queued.load(Ordering::Relaxed), 0);
+        assert_eq!(g.cancelled.load(Ordering::Relaxed), 0);
+        assert!(
+            !g.keep(&chunk),
+            "the scheduler skips what the choke dropped"
+        );
+        assert!(!g.register(k));
+
+        // Unchoked again, the peer repeats the request while the old one is still on its way
+        // to the writer: the block goes out for one of them only.
+        g.set_choked(false);
+        assert!(g.register(k));
+        assert!(g.keep(&chunk));
+        assert!(g.should_upload(&chunk));
+        assert!(!g.should_upload(&chunk));
+    }
+
     #[test]
     fn cancel_drops_exactly_the_cancelled_request() {
-        let g = UploadGate::default();
+        let g = unchoked();
         let k = (3, 0, 16384);
         g.register(k);
         g.cancel(k);
@@ -156,7 +219,7 @@ mod tests {
 
     #[test]
     fn cancel_without_pending_request_is_forgotten() {
-        let g = UploadGate::default();
+        let g = unchoked();
         let k = (3, 0, 16384);
         g.cancel(k);
         g.register(k);
@@ -173,7 +236,7 @@ mod tests {
 
     #[test]
     fn cancel_after_release_is_forgotten() {
-        let g = UploadGate::default();
+        let g = unchoked();
         let k = (1, 16384, 16384);
         g.register(k);
         assert!(g.release(k));
@@ -184,7 +247,7 @@ mod tests {
 
     #[test]
     fn duplicate_requests_are_cancelled_one_by_one() {
-        let g = UploadGate::default();
+        let g = unchoked();
         let k = (0, 0, 16384);
         g.register(k);
         g.register(k);
@@ -199,7 +262,7 @@ mod tests {
 
     #[test]
     fn cancel_of_one_duplicate_keeps_the_other() {
-        let g = UploadGate::default();
+        let g = unchoked();
         let k = (0, 0, 16384);
         g.register(k);
         g.register(k);
@@ -210,7 +273,7 @@ mod tests {
 
     #[test]
     fn cancel_does_not_touch_other_blocks() {
-        let g = UploadGate::default();
+        let g = unchoked();
         g.register((0, 0, 16384));
         g.register((0, 16384, 16384));
         g.cancel((0, 0, 16384));
@@ -220,7 +283,7 @@ mod tests {
 
     #[test]
     fn counts_stay_in_step_with_cancels_and_releases() {
-        let g = UploadGate::default();
+        let g = unchoked();
         g.register((0, 0, 16384));
         g.register((1, 0, 16384));
         g.cancel((1, 0, 16384));
@@ -238,7 +301,7 @@ mod tests {
         let chunk = lengths
             .chunk_info_from_received_data(lengths.validate_piece_index(0).unwrap(), 0, 16384)
             .unwrap();
-        let g = UploadGate::default();
+        let g = unchoked();
         g.register(block_key(&chunk));
         assert!(g.keep(&chunk));
         g.cancel(block_key(&chunk));
