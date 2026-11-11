@@ -111,12 +111,15 @@ pub(crate) struct ManagedTorrentLocked {
 pub(crate) struct ManagedTorrentOptions {
     pub peer_connect_timeout: Option<Duration>,
     pub peer_read_write_timeout: Option<Duration>,
+    pub peer_handshake_timeout: Option<Duration>,
+    pub connect_rate: Option<u32>,
     pub peer_max_request_window: Option<usize>,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    pub peer_backoff: crate::PeerBackoffConfig,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }
