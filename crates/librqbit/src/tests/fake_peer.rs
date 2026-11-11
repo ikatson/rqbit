@@ -174,6 +174,10 @@ impl FakePeer {
         self.send(3, &[]).await
     }
 
+    pub(super) async fn choke(&mut self) -> anyhow::Result<()> {
+        self.send(0, &[]).await
+    }
+
     pub(super) async fn unchoke(&mut self) -> anyhow::Result<()> {
         self.send(1, &[]).await
     }

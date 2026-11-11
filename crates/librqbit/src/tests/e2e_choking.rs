@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     num::NonZeroU32,
     time::{Duration, Instant},
 };
@@ -236,6 +237,81 @@ async fn test_client_waits_for_a_peer_that_chokes_it() -> anyhow::Result<()> {
                 Recv::Timeout => anyhow::bail!("nothing asked for after the unchoke"),
                 Recv::Closed => anyhow::bail!("closed after the unchoke"),
             }
+        }
+        Ok(())
+    })
+    .await
+}
+
+// A choke voids what the client asked the peer for (BEP 3). The client does not wait for those
+// blocks (and then give up on the peer when they don't come): it stays, and asks again once it
+// is unchoked.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_client_asks_again_for_what_a_choke_dropped() -> anyhow::Result<()> {
+    run(async {
+        let seed = start_seeder(SeederOpts::default()).await?;
+        let client = start_client(
+            &seed,
+            ClientOpts {
+                listen: true,
+                read_write_timeout: Some(Duration::from_secs(2)),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        let mut peer = connect(&client, b"-FK0001-").await?;
+        peer.bitfield(&[0b1111_0000]).await?;
+        peer.unchoke().await?;
+
+        // The client asks for all 8 blocks of the torrent. It gets one, and a choke.
+        let mut asked = Vec::new();
+        while asked.len() < 8 {
+            match peer.recv(Duration::from_secs(10)).await {
+                Recv::Msg(Wire::Request(piece, begin, len)) => asked.push((piece, begin, len)),
+                Recv::Msg(_) => {}
+                Recv::Timeout | Recv::Closed => anyhow::bail!("asked for {asked:?} only"),
+            }
+        }
+        let (piece, begin, len) = asked[0];
+        peer.piece(piece, begin, seed.block(piece, begin, len))
+            .await?;
+        peer.choke().await?;
+
+        let (msgs, closed) = peer.collect(Duration::from_secs(5)).await;
+        assert!(!closed, "gave up on a peer that owed it nothing");
+        assert!(
+            msgs.iter().all(|m| !matches!(m, Wire::Request(..))),
+            "asked while choked: {msgs:?}"
+        );
+
+        // Unchoked, it asks for what the choke dropped, and completes the torrent with it.
+        peer.unchoke().await?;
+        let mut again = HashSet::new();
+        let done = client.handle.wait_until_completed();
+        tokio::pin!(done);
+        loop {
+            tokio::select! {
+                r = &mut done => {
+                    r?;
+                    break;
+                }
+                m = peer.recv(Duration::from_secs(20)) => match m {
+                    Recv::Msg(Wire::Request(piece, begin, len)) => {
+                        again.insert((piece, begin, len));
+                        peer.piece(piece, begin, seed.block(piece, begin, len)).await?;
+                    }
+                    Recv::Msg(_) => {}
+                    Recv::Timeout => anyhow::bail!("not finished, asked again for {again:?}"),
+                    Recv::Closed => anyhow::bail!("closed, asked again for {again:?}"),
+                },
+            }
+        }
+        for dropped in &asked[1..] {
+            assert!(
+                again.contains(dropped),
+                "{dropped:?} was not asked for again"
+            );
         }
         Ok(())
     })

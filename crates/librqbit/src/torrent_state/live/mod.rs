@@ -1165,7 +1165,7 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             Message::Bitfield(b) => self
                 .on_bitfield(b.clone_to_owned(None))
                 .context("on_bitfield")?,
-            Message::Choke => self.on_i_am_choked(),
+            Message::Choke => self.on_i_am_choked()?,
             Message::Unchoke => self.on_i_am_unchoked(),
             Message::Interested => self.on_peer_interested(),
             Message::Piece(piece) => self
@@ -1832,6 +1832,12 @@ impl PeerHandler {
 
                 aframe!(self.wait_for_request_slot()).await;
 
+                // While this waited the piece may have gone to another peer: it was stolen, or
+                // the peer choked us and what we had asked it for went back to the queue.
+                if !self.owns_piece(next) {
+                    break;
+                }
+
                 match self
                     .state
                     .peers
@@ -1870,9 +1876,41 @@ impl PeerHandler {
         }
     }
 
-    fn on_i_am_choked(&self) {
+    fn on_i_am_choked(&self) -> anyhow::Result<()> {
         self.lock_flow_control("i_am_choked = true").i_am_choked = true;
+        // A choke voids what we asked the peer for (BEP 3): none of it is coming. Its pieces go
+        // back to the queue for the other peers right away, instead of when this peer is given
+        // up on for not delivering them.
+        let forgotten = self
+            .state
+            .peers
+            .with_live_mut(self.addr, "forget_inflight_requests", |live| {
+                live.forget_inflight_requests()
+            })
+            .unwrap_or_default();
+        let released = self
+            .state
+            .lock_write("release_pieces_on_choke")
+            .get_pieces_mut()?
+            .release_pieces_owned_by(self.addr);
+        if forgotten > 0 || released > 0 {
+            trace!(
+                forgotten,
+                released, "choked: requests dropped, pieces requeued"
+            );
+            self.state.new_pieces_notify.notify_waiters();
+        }
         self.notify_request_slots_changed();
+        Ok(())
+    }
+
+    fn owns_piece(&self, piece: ValidPieceIndex) -> bool {
+        self.state
+            .lock_read("owns_piece")
+            .get_pieces()
+            .ok()
+            .and_then(|pieces| pieces.get_inflight(piece))
+            .is_some_and(|inflight| inflight.peer == self.addr)
     }
 
     fn on_peer_interested(&self) {
