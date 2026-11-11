@@ -727,4 +727,36 @@ mod tests {
             assert!(id >= start && id <= end, "{:?}", id);
         }
     }
+
+    #[test]
+    fn with_new_id_keeps_what_fits_and_what_we_know() {
+        let mut old = generate_table(Some(1000));
+        let new_id = random_id_20();
+        let now = Instant::now();
+        let closest: Vec<Id20> = old
+            .sorted_by_distance_from(new_id, now)
+            .iter()
+            .take(8)
+            .map(|n| n.id())
+            .collect();
+        assert!(old.mark_response(&closest[0], now));
+
+        let new = old.with_new_id(new_id);
+        assert_eq!(new.id, new_id);
+        // The size is what the buckets hold, and no node appears out of nowhere or moves.
+        assert_eq!(new.len(), new.iter().count());
+        assert!(new.len() > 0 && new.len() <= old.len());
+        let old_addrs: std::collections::HashMap<Id20, SocketAddr> =
+            old.iter().map(|n| (n.id(), n.addr())).collect();
+        for node in new.iter() {
+            assert_eq!(old_addrs.get(&node.id()), Some(&node.addr()));
+        }
+        // The nodes closest to the new id always fit: their bucket is the one that splits.
+        for id in &closest {
+            assert!(new.iter().any(|n| n.id() == *id), "{id:?} was dropped");
+        }
+        // What we knew about a node comes along with it.
+        let known = new.iter().find(|n| n.id() == closest[0]).unwrap();
+        assert!(matches!(known.status(now), super::NodeStatus::Good));
+    }
 }

@@ -41,5 +41,7 @@ ed25519-dalek = { workspace = true, features = ["zeroize"] }
 sha1w.workspace = true
 
 [dev-dependencies]
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 tempfile.workspace = true
+# Only to sign with the expanded private keys of the BEP 44 test vectors.
+ed25519-dalek = { workspace = true, features = ["hazmat", "digest"] }

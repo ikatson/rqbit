@@ -771,6 +771,28 @@ mod tests {
         );
     }
 
+    /// The private keys of the BEP 44 vectors are expanded (64 byte) keys rather than seeds, so
+    /// they are signed with directly; ed25519 signatures are deterministic, so ours must be the
+    /// ones printed in the BEP.
+    #[test]
+    fn bep44_vector_signatures() {
+        use ed25519_dalek::{
+            Sha512,
+            hazmat::{ExpandedSecretKey, raw_sign},
+        };
+        let esk = ExpandedSecretKey::from_bytes(&unhex::<64>(
+            "e06d3183d14159228433ed599221b80bd0a5ce8352e4bdf0262f76786ef1c74d\
+             b7e7a9fea2c0eb269d61e3b38e450a22e754941ac78479d6c54e1faf6037881d",
+        ));
+        let pk = VerifyingKey::from(&esk);
+        assert_eq!(pk.to_bytes(), unhex::<32>(PUBLIC_KEY));
+        let sign = |salt: &[u8]| {
+            raw_sign::<Sha512>(&esk, &signature_buffer(salt, 1, VALUE), &pk).to_bytes()
+        };
+        assert_eq!(sign(b""), unhex::<64>(SIG_NO_SALT));
+        assert_eq!(sign(b"foobar"), unhex::<64>(SIG_SALT));
+    }
+
     #[test]
     fn sign_then_verify() {
         let seed = [7u8; 32];
