@@ -97,8 +97,10 @@ Peer connections, HTTP(S) trackers and every other HTTP request go through the p
 is ever sent directly: what the proxy can't carry is turned off (UDP trackers report an error,
 the DHT is not started), outgoing uTP is not used (TCP through the proxy instead), and when the
 proxy is down connections fail until it is back. Incoming connections are unchanged, but a
-session behind a proxy is normally not reachable from outside. `https://` proxies are not
-supported.
+session behind a proxy is normally not reachable from outside. Under `socks5h://` the DHT
+bootstrap nodes are pinged through the proxy by name. The DHT does not reuse the node ids saved
+with another egress (direct, or another proxy), so they can't link the two addresses.
+`https://` proxies are not supported.
 
 ## Watching a directory for .torrents
 

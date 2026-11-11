@@ -202,19 +202,30 @@ async fn a_dropped_association_is_rebuilt() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn bootstrap_host_names_follow_the_proxy_dns_mode() {
-    let spy = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let by_name = format!("localhost:{}", spy.local_addr().unwrap().port());
-
-    // `socks5h`: the name is neither looked up here nor sent anywhere, and the DHT lives on.
+    // `socks5h`: the proxy is given the name (nothing is looked up here), the node answers
+    // through it, and the DHT bootstraps from it: the nodes it knows end up in our table.
+    let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let b = direct_node(silent.local_addr().unwrap()).await;
+    let c = direct_node(silent.local_addr().unwrap()).await;
+    b.add_node(c.listen_addr()).await.unwrap();
+    let b_by_name = format!("localhost:{}", b.listen_addr().port());
     let mut opts = FakeProxyOptions::new(FakeProxyKind::Socks5);
     opts.remote_dns = true;
     let remote = FakeProxy::start(opts).await;
-    let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let b = direct_node(silent.local_addr().unwrap()).await;
-    let a = proxied_node(&remote, vec![by_name.clone()]).await;
-    assert_silent(&spy).await;
-    assert!(remote.datagrams().is_empty(), "{:?}", remote.datagrams());
-    a.add_node(b.listen_addr()).await.unwrap();
+    let a = proxied_node(&remote, vec![b_by_name.clone()]).await;
+    eventually("a node learnt from the bootstrap node", || async {
+        a.with_routing_tables(|v4, _| v4.iter().any(|n| n.addr() == c.listen_addr()))
+            .then_some(())
+    })
+    .await;
+    let datagrams = remote.datagrams();
+    assert!(
+        datagrams.iter().any(|d| d.target == b_by_name),
+        "{datagrams:?}"
+    );
+
+    let spy = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let by_name = format!("localhost:{}", spy.local_addr().unwrap().port());
 
     // `socks5`: the name is looked up here, and the node is asked through the proxy.
     let local = FakeProxy::start(FakeProxyOptions::new(FakeProxyKind::Socks5)).await;

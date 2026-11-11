@@ -12,6 +12,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
+    time::Duration,
 };
 
 use parking_lot::Mutex;
@@ -242,10 +243,23 @@ impl FakeProxy {
         }
     }
 
-    /// Starts a stopped proxy again on the same port.
+    /// Starts a stopped proxy again on the same port. The port can stay busy for a moment after
+    /// the stop (connections in their last states, another process grabbing it): binding is
+    /// retried for a few seconds.
     pub async fn restart(&self) {
         self.stop().await;
-        let listener = TcpListener::bind(self.addr).await.unwrap();
+        let mut attempts = 0;
+        let listener = loop {
+            match TcpListener::bind(self.addr).await {
+                Ok(listener) => break listener,
+                Err(e) if attempts < 50 => {
+                    attempts += 1;
+                    tracing::debug!("rebinding {}: {e:#}", self.addr);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(e) => panic!("can't bind {} again: {e:#}", self.addr),
+            }
+        };
         self.run(listener);
     }
 

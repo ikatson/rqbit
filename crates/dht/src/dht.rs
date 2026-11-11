@@ -248,10 +248,21 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
         resp: &crate::Result<ResponseOrError>,
     ) {
         let mut table = req.dht.get_table_for_addr(addr).write();
-        if resp.is_ok() {
-            table.mark_response(&target_node, now());
-        } else {
-            table.mark_error(&target_node);
+        record_outcome(&mut table, &target_node, resp.as_ref().map(|_| ()));
+    }
+}
+
+/// Records in `table` how a request to node `id` went. A failure of the proxy says nothing
+/// about the node: while the proxy is down every request fails at once, and counting that would
+/// mark the whole table bad.
+fn record_outcome(table: &mut RoutingTable, id: &Id20, outcome: Result<(), &Error>) {
+    match outcome {
+        Ok(()) => {
+            table.mark_response(id, now());
+        }
+        Err(Error::Proxy(_)) => {}
+        Err(_) => {
+            table.mark_error(id);
         }
     }
 }
@@ -1873,6 +1884,9 @@ impl core::fmt::Debug for ResponseOrError {
 struct DhtWorker {
     socket: DhtSocket,
     dht: Arc<DhtState>,
+    /// Behind a proxy that resolves host names: the pings sent to bootstrap nodes by name, by
+    /// transaction id, each waiting for the address its answer comes from.
+    name_probes: Mutex<Vec<([u8; 4], tokio::sync::oneshot::Sender<SocketAddr>)>>,
 }
 
 /// Where the datagrams of the DHT go: a local UDP socket, or a SOCKS5 proxy (UDP ASSOCIATE).
@@ -1885,12 +1899,12 @@ enum DhtSocket {
 const RECV_BUF_LEN: usize = 16384 + SOCKS5_UDP_HEADER_MAX;
 
 impl DhtSocket {
-    /// Whether host names (of bootstrap nodes) go to the proxy, which can't be done for the
-    /// DHT: they must not be looked up locally either.
-    fn resolves_remotely(&self) -> bool {
+    /// The association to give host names (of bootstrap nodes) to, when the proxy resolves them
+    /// (`socks5h`): they must not be looked up locally.
+    fn remote_resolver(&self) -> Option<&Socks5UdpAssociation> {
         match self {
-            DhtSocket::Direct(_) => false,
-            DhtSocket::Socks5(assoc) => assoc.proxy().kind().resolves_hostnames(),
+            DhtSocket::Socks5(assoc) if assoc.proxy().kind().resolves_hostnames() => Some(assoc),
+            DhtSocket::Direct(_) | DhtSocket::Socks5(_) => None,
         }
     }
 
@@ -1955,10 +1969,15 @@ impl DhtWorker {
     }
 
     async fn bootstrap_hostname(&self, hostname: &str) -> crate::Result<()> {
-        let addrs = tokio::net::lookup_host(hostname)
-            .await
-            .map_err(|err| Error::lookup(hostname, err))?
-            .collect::<Vec<_>>();
+        let addrs = match self.socket.remote_resolver() {
+            Some(assoc) if hostname.parse::<SocketAddr>().is_err() => {
+                vec![self.resolve_through_proxy(assoc, hostname).await?]
+            }
+            _ => tokio::net::lookup_host(hostname)
+                .await
+                .map_err(|err| Error::lookup(hostname, err))?
+                .collect::<Vec<_>>(),
+        };
         let ids = *self.dht.ids.read();
         let v4 = RecursiveRequest::find_node_for_routing_table(
             self.dht.clone(),
@@ -1976,6 +1995,68 @@ impl DhtWorker {
 
         let (v4, v6) = tokio::join!(v4, v6);
         v4.or(v6)
+    }
+
+    /// Behind a proxy that resolves host names (`socks5h`): where the node `hostname`
+    /// (`host:port`) is. The proxy is asked to send it a ping by name, and the answer tells the
+    /// address; nothing is looked up locally. The answer is taken from whichever address it
+    /// comes, by its transaction id, so a relay that gives the source by name (which the DHT
+    /// drops) makes this time out.
+    async fn resolve_through_proxy(
+        &self,
+        assoc: &Socks5UdpAssociation,
+        hostname: &str,
+    ) -> crate::Result<SocketAddr> {
+        let invalid = || {
+            Error::lookup(
+                hostname,
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "expected host:port"),
+            )
+        };
+        let (host, port) = hostname.rsplit_once(':').ok_or_else(invalid)?;
+        let port: u16 = port.parse().map_err(|_| invalid())?;
+
+        // Longer than the transaction ids of our other requests, so that the answer can't be
+        // taken for one of theirs.
+        let tid: [u8; 4] = rand::random();
+        let mut buf = Vec::new();
+        bprotocol::serialize_message(
+            &mut buf,
+            ByteBufOwned::from(&tid[..]),
+            None,
+            None,
+            MessageKind::PingRequest(PingRequest {
+                id: self.dht.ids.read().v4,
+            }),
+        )?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.name_probes.lock().push((tid, tx));
+        let result = match assoc.send_to(&buf, TargetAddr::Domain(host, port)).await {
+            Err(e) => Err(Error::Proxy(e)),
+            Ok(()) => match tokio::time::timeout(RESPONSE_TIMEOUT, rx).await {
+                Ok(Ok(addr)) => Ok(addr),
+                Ok(Err(_)) => Err(Error::DhtDead),
+                Err(_) => Err(Error::ResponseTimeout(RESPONSE_TIMEOUT)),
+            },
+        };
+        self.name_probes.lock().retain(|(t, _)| *t != tid);
+        let addr = result?;
+        debug!(hostname, ?addr, "bootstrap node found through the proxy");
+        Ok(addr)
+    }
+
+    /// Whom `msg` goes to when it answers a ping of [`Self::resolve_through_proxy`].
+    fn take_name_probe(
+        &self,
+        msg: &Message<ByteBufOwned>,
+    ) -> Option<tokio::sync::oneshot::Sender<SocketAddr>> {
+        if !matches!(msg.kind, MessageKind::Response(_)) {
+            return None;
+        }
+        let tid: [u8; 4] = msg.transaction_id.as_ref().try_into().ok()?;
+        let mut probes = self.name_probes.lock();
+        let i = probes.iter().position(|(t, _)| *t == tid)?;
+        Some(probes.swap_remove(i).1)
     }
 
     async fn bootstrap_hostname_with_backoff(&self, addr: &str) -> crate::Result<()> {
@@ -1997,26 +2078,8 @@ impl DhtWorker {
     async fn bootstrap(&self, bootstrap_addrs: &[String]) -> crate::Result<()> {
         let mut futs = FuturesUnordered::new();
 
-        // Behind a proxy that resolves host names, looking them up here would leak them; the
-        // proxy can't resolve them for the DHT either (the requests are keyed by address).
-        let remote_dns = self.socket.resolves_remotely();
-        let mut skipped = 0;
         for addr in bootstrap_addrs.iter() {
-            if remote_dns && addr.parse::<SocketAddr>().is_err() {
-                skipped += 1;
-                continue;
-            }
             futs.push(self.bootstrap_hostname_with_backoff(addr));
-        }
-        if skipped > 0 {
-            warn!(
-                skipped,
-                "the proxy resolves host names: bootstrap nodes given by name are not used, only \
-                 addresses and the nodes already known"
-            );
-            if futs.is_empty() {
-                return Ok(());
-            }
         }
         let mut successes = 0;
         while let Some(resp) = futs.next().await {
@@ -2124,14 +2187,10 @@ impl DhtWorker {
                     let (id, addr) = r.unwrap();
                     futs.push(async move {
                         table.write().mark_outgoing_request(&id, now());
-                        match self.dht.request(Request::Ping, addr).await {
-                            Ok(_) => {
-                                table.write().mark_response(&id, now());
-                            },
-                            Err(e) => {
-                                table.write().mark_error(&id);
-                                debug!("error: {e:#}");
-                            }
+                        let result = self.dht.request(Request::Ping, addr).await;
+                        record_outcome(&mut table.write(), &id, result.as_ref().map(|_| ()));
+                        if let Err(e) = result {
+                            debug!("error: {e:#}");
                         }
                     }.instrument(debug_span!("ping", addr=addr.to_string())))
                 },
@@ -2182,10 +2241,17 @@ impl DhtWorker {
                     continue;
                 };
                 match bprotocol::deserialize_message::<ByteBufOwned>(&buf[..size]) {
-                    Ok(msg) => match output_tx.send((msg, addr)).await {
-                        Ok(_) => {}
-                        Err(_) => return Err(Error::DhtDead),
-                    },
+                    Ok(msg) => {
+                        if let Some(probe) = self.take_name_probe(&msg) {
+                            if probe.send(addr).is_err() {
+                                debug!(?addr, "the bootstrap lookup has given up already");
+                            }
+                            continue;
+                        }
+                        if output_tx.send((msg, addr)).await.is_err() {
+                            return Err(Error::DhtDead);
+                        }
+                    }
                     Err(e) => {
                         debug!("{}: error deserializing incoming message: {}", addr, e);
                         if let Some(tid) = bprotocol::malformed_put_transaction_id(&buf[..size]) {
@@ -2294,8 +2360,8 @@ pub struct DhtConfig<'a> {
     /// Sends and receives every datagram through this proxy (SOCKS5 UDP ASSOCIATE) instead of a
     /// local socket. Only SOCKS5 proxies can do that: with another kind
     /// [`DhtState::with_config`] fails with [`ProxyError::UdpNotSupported`]. Behind a
-    /// `socks5h` proxy bootstrap nodes given by host name are skipped (looking them up locally
-    /// would leak them).
+    /// `socks5h` proxy bootstrap nodes given by host name are not looked up locally: the proxy
+    /// is asked to send them a ping by name, and their answer tells their address.
     pub proxy: Option<&'a ProxyConfig>,
     /// BEP 42 enforcement: nodes whose id does not match their address are kept out of the
     /// routing table, are not handed out in `nodes` and never get our announces or puts. Their
@@ -2374,7 +2440,11 @@ impl DhtState {
                 {
                     let state = state.clone();
                     async move {
-                        let worker = DhtWorker { socket, dht: state };
+                        let worker = DhtWorker {
+                            socket,
+                            dht: state,
+                            name_probes: Mutex::new(Vec::new()),
+                        };
                         worker.start(in_rx, &bootstrap_addrs).await
                     }
                 },
@@ -3375,5 +3445,40 @@ mod tests {
         assert_eq!((got.seq, got.value), (1, value));
         // Without a stored item, there is nothing to fall back on.
         assert!(dht.get_mutable(public_key, b"x").await.is_err());
+    }
+
+    // A proxy outage says nothing about the nodes: however many requests fail because of it, a
+    // good node stays good. Other failures still count.
+    #[test]
+    fn proxy_failures_do_not_make_nodes_bad() {
+        use crate::{
+            Error,
+            routing_table::{NodeStatus, RoutingTable},
+        };
+        use librqbit_core::proxy::ProxyError;
+
+        let mut table = RoutingTable::new(Id20::new([0; 20]), None);
+        let id = Id20::new([0xff; 20]);
+        table.add_node(id, SocketAddr::from((Ipv4Addr::LOCALHOST, 6881)));
+        let status = |table: &RoutingTable| {
+            let node = table.iter().find(|n| n.id() == id).unwrap();
+            node.status(super::now())
+        };
+
+        table.mark_outgoing_request(&id, super::now());
+        super::record_outcome(&mut table, &id, Ok(()));
+        assert!(matches!(status(&table), NodeStatus::Good));
+
+        let down = Error::Proxy(ProxyError::UdpAssociationDown("refused".into()));
+        for _ in 0..10 {
+            super::record_outcome(&mut table, &id, Err(&down));
+        }
+        assert!(matches!(status(&table), NodeStatus::Good));
+
+        let timeout = Error::ResponseTimeout(Duration::from_secs(1));
+        for _ in 0..2 {
+            super::record_outcome(&mut table, &id, Err(&timeout));
+        }
+        assert!(matches!(status(&table), NodeStatus::Bad));
     }
 }

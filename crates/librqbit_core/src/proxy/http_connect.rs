@@ -47,6 +47,9 @@ pub async fn http_connect(
 }
 
 /// Asks the HTTP proxy at the other end of `stream` for a tunnel to `target`.
+///
+/// A [`TargetAddr::Domain`] must be a plain ASCII host name (see
+/// [`ProxyError::InvalidTargetHost`]); anything else would end up in the request head as it is.
 pub async fn http_connect_with_stream<S: AsyncRead + AsyncWrite + Unpin>(
     mut stream: S,
     proxy: &ProxyConfig,
@@ -54,7 +57,10 @@ pub async fn http_connect_with_stream<S: AsyncRead + AsyncWrite + Unpin>(
 ) -> Result<HttpTunnel<S>, ProxyError> {
     let authority = match target {
         TargetAddr::Ip(addr) => addr.to_string(),
-        TargetAddr::Domain(host, port) => HostPort(host, port).to_string(),
+        TargetAddr::Domain(host, port) if super::is_plain_host_name(host) => {
+            HostPort(host, port).to_string()
+        }
+        TargetAddr::Domain(..) => return Err(ProxyError::InvalidTargetHost),
     };
     let mut request = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n");
     if let Some(username) = proxy.username() {
@@ -255,6 +261,29 @@ mod tests {
         .await;
         res.unwrap();
         assert!(req.starts_with("CONNECT tracker.example:443 HTTP/1.1\r\n"));
+    }
+
+    /// Nothing is sent for a target host that would change the request head.
+    #[tokio::test]
+    async fn odd_domain_targets_are_refused() {
+        for host in [
+            "a.example\r\nX-Injected: 1",
+            "a b",
+            "a.example/x",
+            "",
+            "прокси.example",
+        ] {
+            let (client, mut server) = duplex(1024);
+            let proxy = ProxyConfig::parse("http://p:3128").unwrap();
+            let res = http_connect_with_stream(client, &proxy, TargetAddr::Domain(host, 80)).await;
+            assert!(
+                matches!(res, Err(ProxyError::InvalidTargetHost)),
+                "{host:?}: {res:?}"
+            );
+            let mut sent = Vec::new();
+            server.read_to_end(&mut sent).await.unwrap();
+            assert!(sent.is_empty(), "{host:?}");
+        }
     }
 
     #[tokio::test]

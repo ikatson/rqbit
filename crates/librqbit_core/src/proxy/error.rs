@@ -52,6 +52,10 @@ pub enum ProxyError {
     /// The datagram plus the SOCKS5 UDP header doesn't fit in one UDP datagram.
     #[error("datagram too large to relay through the proxy")]
     DatagramTooLarge,
+    /// A host name that can't be put in a request as it is: an HTTP `CONNECT` target must be
+    /// ASCII letters, digits, `-`, `.` and `_` (international names in their `xn--` form).
+    #[error("invalid target host name")]
+    InvalidTargetHost,
 }
 
 /// RFC 1928 §6.
