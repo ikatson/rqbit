@@ -46,6 +46,8 @@ enum Reply {
     Body(Vec<u8>),
     Status(u16),
     Hang,
+    /// The body, after a while.
+    Delayed(Duration, Vec<u8>),
 }
 
 type Script = Arc<dyn Fn(&Req, usize) -> Reply + Send + Sync>;
@@ -107,6 +109,10 @@ impl FakeHttp {
                             Reply::Body(b) => (200, b),
                             Reply::Status(s) => (s, Vec::new()),
                             Reply::Hang => futures::future::pending().await,
+                            Reply::Delayed(d, b) => {
+                                tokio::time::sleep(d).await;
+                                (200, b)
+                            }
                         }
                     };
                     let head = format!(
@@ -275,6 +281,27 @@ async fn make(
     force: Option<Duration>,
 ) -> Arc<TorrentTrackers> {
     let n = tiers.len();
+    make_with_own(tiers, n, options, force).await
+}
+
+/// Like [`make`], but only the first `own` tiers are the torrent's; the rest are the
+/// session's.
+async fn make_with_own(
+    tiers: Vec<Vec<Url>>,
+    own: usize,
+    options: TrackerAnnounceOptions,
+    force: Option<Duration>,
+) -> Arc<TorrentTrackers> {
+    make_with_timings(tiers, own, options, force, timings()).await
+}
+
+async fn make_with_timings(
+    tiers: Vec<Vec<Url>>,
+    own: usize,
+    options: TrackerAnnounceOptions,
+    force: Option<Duration>,
+    timings: TrackerTimings,
+) -> Arc<TorrentTrackers> {
     TorrentTrackers::new(
         TrackerCommsParams {
             info_hash: Id20::new([7; 20]),
@@ -291,11 +318,11 @@ async fn make(
                 .await
                 .unwrap(),
             options,
-            timings: timings(),
+            timings,
             enabled: true,
         },
         tiers,
-        n,
+        own,
         false,
     )
 }
@@ -382,12 +409,29 @@ async fn dropping_the_peer_stream_stops_the_trackers() {
 #[tokio::test(flavor = "multi_thread")]
 async fn stopped_goes_only_to_trackers_that_acknowledged_started() {
     let t = FakeHttp::start(Arc::new(|_, _| Reply::Status(500))).await;
-    let tt = make(vec![vec![t.url()]], all(), FAST).await;
+    // No retry within the test, so that `stop` can't land while a `started` is in flight
+    // (that one would get a `stopped`, as the tracker may have seen it).
+    let tt = make_with_timings(
+        vec![vec![t.url()]],
+        1,
+        all(),
+        FAST,
+        TrackerTimings {
+            retry_min: Duration::from_secs(600),
+            retry_max: Duration::from_secs(600),
+            ..timings()
+        },
+    )
+    .await;
     let _consumer = consume(&tt);
-    eventually("failing announces", || t.count() >= 2).await;
+    eventually("a failed announce", || {
+        tt.stats()[0].state == TrackerState::Error
+    })
+    .await;
     tt.stop();
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tt.wait_stopped().await;
     assert_eq!(t.count_event("stopped"), 0);
+    assert_eq!(t.count(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -494,11 +538,13 @@ async fn warning_and_failure_are_surfaced() {
     .await;
     let tt = make(vec![vec![t.url()]], all(), FAST).await;
     let _consumer = consume(&tt);
+    // The next announce goes out 100 ms later; the warning is there while the first is the
+    // last answer.
     eventually("the warning", || {
-        tt.stats()[0].warning.as_deref() == Some("slow")
+        let st = &tt.stats()[0];
+        st.warning.as_deref() == Some("slow") && st.state == TrackerState::Working
     })
     .await;
-    assert_eq!(tt.stats()[0].state, TrackerState::Working);
     eventually("the failure", || tt.stats()[0].state == TrackerState::Error).await;
     let st = &tt.stats()[0];
     assert!(st.last_error.as_deref().unwrap().contains("nope"));
@@ -732,12 +778,27 @@ async fn a_failing_scrape_leaves_the_state_alone() {
     *t.scrape_body.lock() = b"d14:failure reason4:nopee".to_vec();
     let tt = make(vec![vec![t.url()]], all(), FAST).await;
     let _consumer = consume(&tt);
-    eventually("two scrapes", || t.scrapes.lock().len() >= 2).await;
+    eventually("the first scrape", || t.scrapes.lock().len() == 1).await;
+    // A failed scrape turns the automatic ones off; the announces go on.
+    let n = t.count();
+    eventually("more announces", || t.count() >= n + 3).await;
+    assert_eq!(
+        t.scrapes.lock().len(),
+        1,
+        "no automatic scrape after a failure"
+    );
+    // The next announce may be in flight (`Updating`): wait for its answer.
+    eventually("working", || tt.stats()[0].state == TrackerState::Working).await;
     let st = &tt.stats()[0];
-    assert_eq!(st.state, TrackerState::Working);
     assert_eq!((st.seeders, st.leechers), (Some(5), Some(3)));
     assert_eq!(st.downloaded, None);
     assert_eq!(st.last_error, None);
+    // Asking still works.
+    eventually("a scrape on demand", || {
+        tt.scrape().unwrap();
+        t.scrapes.lock().len() >= 2
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -792,4 +853,196 @@ async fn dual_stack_udp_tracker_is_one_row() {
     assert_eq!(rows[0].state, TrackerState::Working);
     assert_eq!(rows[0].seeders, Some(9), "the larger of 7 and 9");
     assert_eq!(rows[0].downloaded, Some(42));
+}
+
+// A magnet that turns out to be private drops the session's tiers: the ones told `started`
+// hear `stopped`, nobody asks them again, not even after a resume, and they leave the
+// tracker list.
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_the_session_tiers() {
+    let own = FakeHttp::start(FakeHttp::ok(PLAIN)).await;
+    let session = FakeHttp::start(FakeHttp::ok(PLAIN)).await;
+    let tt = make_with_own(vec![vec![own.url()], vec![session.url()]], 1, all(), FAST).await;
+    let consumer = consume(&tt);
+    eventually("both announced", || {
+        own.count_event("started") == 1 && session.count_event("started") == 1
+    })
+    .await;
+
+    tt.drop_session_tiers();
+    eventually("stopped to the session tracker", || {
+        session.count_event("stopped") == 1
+    })
+    .await;
+    assert_eq!(own.count_event("stopped"), 0, "the own tracker goes on");
+    let rows = tt.stats();
+    assert_eq!(
+        rows.iter().map(|r| r.url.as_str()).collect::<Vec<_>>(),
+        vec![own.url().as_str()]
+    );
+    let heard = session.count();
+    let n = own.count();
+    eventually("more announces to the own tracker", || own.count() >= n + 2).await;
+
+    // A pause and a resume do not bring it back.
+    tt.stop();
+    eventually("stopped to the own tracker", || {
+        own.count_event("stopped") == 1
+    })
+    .await;
+    eventually("the first driver to finish", || consumer.is_finished()).await;
+    let _consumer = consume(&tt);
+    eventually("started again", || own.count_event("started") == 2).await;
+    let n = own.count();
+    eventually("more announces to the own tracker", || own.count() >= n + 2).await;
+    assert_eq!(session.count(), heard, "{:?}", session.events());
+
+    // Dropping again (or with no session tiers left) does nothing.
+    tt.drop_session_tiers();
+    assert_eq!(tt.stats().len(), 1);
+}
+
+// The peers of an announce response come out of the stream.
+#[tokio::test(flavor = "multi_thread")]
+async fn peers_reach_the_stream() {
+    let mut body = b"d8:intervali1800e5:peers12:".to_vec();
+    body.extend_from_slice(&[127, 0, 0, 1, 0x1a, 0xe1, 127, 0, 0, 2, 0x1a, 0xe2]);
+    body.push(b'e');
+    let t = FakeHttp::start(Arc::new(move |_, _| Reply::Body(body.clone()))).await;
+    let tt = make(vec![vec![t.url()]], all(), None).await;
+    let mut stream = tt.peer_stream().expect("trackers in use");
+    let mut got = Vec::new();
+    while got.len() < 2 {
+        let addr = tokio::time::timeout(Duration::from_secs(10), stream.next())
+            .await
+            .expect("peers in time")
+            .expect("the stream goes on");
+        got.push(addr);
+    }
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            "127.0.0.1:6881".parse::<SocketAddr>().unwrap(),
+            "127.0.0.2:6882".parse().unwrap()
+        ]
+    );
+    assert_eq!(tt.stats()[0].peers_received, Some(2));
+}
+
+// Intervals far beyond anything sensible are capped instead of overflowing the clocks.
+#[tokio::test(flavor = "multi_thread")]
+async fn huge_intervals_are_capped() {
+    // The largest numbers bencode reads without overflowing its own integer parser.
+    let body = "d8:intervali9223372036854775807e12:min intervali9223372036854775807e5:peers0:e";
+    for force in [None, FAST] {
+        let t = FakeHttp::start(FakeHttp::ok(body)).await;
+        let tt = make(vec![vec![t.url()]], all(), force).await;
+        let _consumer = consume(&tt);
+        let mut next = None;
+        eventually("a scheduled announce", || {
+            let st = &tt.stats()[0];
+            next = st
+                .next_announce
+                .filter(|_| st.state == TrackerState::Working);
+            next.is_some()
+        })
+        .await;
+        let wait = next
+            .and_then(|n| n.duration_since(SystemTime::now()).ok())
+            .unwrap_or_default();
+        assert!(wait <= Duration::from_secs(24 * 3600), "{wait:?}");
+        tt.reannounce().unwrap();
+        tt.scrape().unwrap();
+        // With the forced 100 ms interval the next announce may be in flight.
+        assert_ne!(tt.stats()[0].state, TrackerState::Error);
+    }
+}
+
+// A reannounce goes out at once, to working trackers and to the ones waiting for a retry.
+#[tokio::test(flavor = "multi_thread")]
+async fn reannounce_goes_now_and_retries_failing_trackers() {
+    let t = http_set(vec![FakeHttp::ok(PLAIN), failing()]).await;
+    let tt = make_with_timings(
+        vec![vec![t[0].url()], vec![t[1].url()]],
+        2,
+        all(),
+        None,
+        TrackerTimings {
+            retry_min: Duration::from_secs(600),
+            retry_max: Duration::from_secs(600),
+            ..timings()
+        },
+    )
+    .await;
+    let _consumer = consume(&tt);
+    eventually("the first announces", || {
+        let st = tt.stats();
+        st[0].state == TrackerState::Working && st[1].state == TrackerState::Error
+    })
+    .await;
+    assert_eq!((t[0].count(), t[1].count()), (1, 1));
+
+    tt.reannounce().unwrap();
+    eventually("both asked again", || {
+        t[0].count() == 2 && t[1].count() == 2
+    })
+    .await;
+    // The working one was told `started` already; the failed one never answered it.
+    assert_eq!(t[0].events()[1], None);
+    assert_eq!(t[1].events()[1].as_deref(), Some("started"));
+}
+
+// A `completed` asked for while the `started` (which said something was left) is in flight
+// still goes out after it.
+#[tokio::test(flavor = "multi_thread")]
+async fn completed_while_started_is_in_flight() {
+    let t = FakeHttp::start(Arc::new(|_, idx| {
+        if idx == 0 {
+            Reply::Delayed(Duration::from_millis(300), PLAIN.as_bytes().to_vec())
+        } else {
+            Reply::Body(PLAIN.as_bytes().to_vec())
+        }
+    }))
+    .await;
+    let tt = make(vec![vec![t.url()]], all(), None).await;
+    let _consumer = consume(&tt);
+    eventually("the started request", || t.count() == 1).await;
+    assert_eq!(tt.stats()[0].state, TrackerState::Updating);
+    tt.completed();
+    eventually("completed", || t.count_event("completed") == 1).await;
+    assert_eq!(
+        t.events(),
+        vec![Some("started".into()), Some("completed".into())]
+    );
+}
+
+// After a quick pause and resume the tracker hears `stopped` before the next `started`, so it
+// does not drop us for a whole interval.
+#[tokio::test(flavor = "multi_thread")]
+async fn stopped_comes_before_the_next_started() {
+    let t = FakeHttp::start(Arc::new(|r, _| {
+        let body = PLAIN.as_bytes().to_vec();
+        if r.param("event") == Some("stopped") {
+            Reply::Delayed(Duration::from_millis(150), body)
+        } else {
+            Reply::Body(body)
+        }
+    }))
+    .await;
+    let tt = make(vec![vec![t.url()]], all(), None).await;
+    let consumer = consume(&tt);
+    eventually("started", || tt.stats()[0].state == TrackerState::Working).await;
+    tt.stop();
+    eventually("the first driver to finish", || consumer.is_finished()).await;
+    let _consumer = consume(&tt);
+    eventually("started again", || t.count_event("started") == 2).await;
+    assert_eq!(
+        t.events(),
+        vec![
+            Some("started".into()),
+            Some("stopped".into()),
+            Some("started".into())
+        ]
+    );
 }

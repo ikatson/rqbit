@@ -135,13 +135,17 @@ where
 pub struct TrackerResponse<'a> {
     #[serde(rename = "warning message", borrow)]
     pub warning_message: Option<ByteBuf<'a>>,
-    pub complete: Option<u64>,
+    // Counts are read as signed numbers: a tracker that sends a negative one is wrong, but that
+    // should not throw the peers of the response away.
+    pub complete: Option<i64>,
     pub interval: Option<u64>,
     #[serde(rename = "min interval")]
     pub min_interval: Option<u64>,
     #[serde(rename = "tracker id", borrow)]
     pub tracker_id: Option<ByteBuf<'a>>,
-    pub incomplete: Option<u64>,
+    pub incomplete: Option<i64>,
+    /// Not in BEP 3, but some trackers send how many times the torrent was downloaded.
+    pub downloaded: Option<i64>,
     // A tracker that has no peers to give may leave the key out.
     #[serde(default, borrow)]
     pub peers: Peers<'a, SocketAddrV4>,

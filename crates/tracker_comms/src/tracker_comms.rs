@@ -14,13 +14,13 @@
 //! While running, one task (the driver) owns the schedule: it decides every time which
 //! trackers are in use under the BEP 12 tier rules, and runs their announces concurrently.
 
+use std::collections::VecDeque;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, bail};
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, Shared};
 use futures::stream::{BoxStream, FuturesUnordered};
 use futures::{FutureExt, StreamExt};
 use parking_lot::Mutex;
@@ -43,6 +43,16 @@ const MAX_HTTP_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(1800);
 /// Trackers that ask for less than this get this.
 const MIN_INTERVAL: Duration = Duration::from_secs(5);
+/// Trackers that ask for more than this get this. Without a cap a tracker could make the
+/// time arithmetic overflow, and a day is longer than any tracker means seriously.
+const MAX_INTERVAL: Duration = Duration::from_secs(24 * 3600);
+/// Peers the trackers returned that the torrent did not take yet; more are dropped. The
+/// trackers give more on the next announce.
+const MAX_PENDING_PEERS: usize = 10_000;
+/// Texts from the trackers (warnings, failure reasons) are kept up to this many bytes.
+const MAX_TEXT_LEN: usize = 512;
+/// A `tracker id` longer than this is not echoed back.
+const MAX_TRACKER_ID_LEN: usize = 1024;
 
 #[derive(Default, Clone, Copy, Debug)]
 pub enum TrackerCommsStatsState {
@@ -259,6 +269,9 @@ struct Tracker {
     scrape_in_flight: bool,
     /// A scrape is due; it goes out as soon as the tracker is in use.
     scrape_wanted: bool,
+    /// Scrapes go out by themselves after announces. Off once a scrape failed, as the tracker
+    /// then most likely can't be scraped (asking on demand still works).
+    auto_scrape: bool,
     last_scrape: Option<Instant>,
 }
 
@@ -301,6 +314,7 @@ impl Tracker {
             pending_completed: false,
             tracker_id: None,
             resolved: None,
+            auto_scrape: scrapable,
             scrapable,
             scrape_in_flight: false,
             scrape_wanted: false,
@@ -346,6 +360,31 @@ impl Tracker {
             .reannounce_floor
             .max(self.min_interval.unwrap_or_default())
     }
+
+    /// When a forced announce may go out at the earliest: once the floor has passed since the
+    /// last request.
+    fn earliest_reannounce(&self, timings: &TrackerTimings, now: Instant) -> Instant {
+        self.last_attempt
+            .and_then(|l| l.checked_add(self.reannounce_floor(timings)))
+            .unwrap_or(now)
+            .max(now)
+    }
+
+    /// The `stopped` announce for this tracker, if it knows about us: it acknowledged a
+    /// `started`, or a `started` is in flight and may well have arrived.
+    fn stopped_job(&self, id: usize, stats: Option<TrackerCommsStats>) -> Option<Job> {
+        let knows_us = self.started_acked || (self.in_flight && self.needs_started);
+        (knows_us && !self.disabled).then(|| Job {
+            id,
+            url: self.url.clone(),
+            kind: self.kind,
+            event: Some(TrackerRequestEvent::Stopped),
+            tracker_id: self.tracker_id.clone(),
+            resolved: self.resolved,
+            no_peers: true,
+            stats,
+        })
+    }
 }
 
 struct DriverHandle {
@@ -361,6 +400,13 @@ struct Inner {
     tiers: Vec<Vec<usize>>,
     driver: Option<DriverHandle>,
     generation: u64,
+    /// The `stopped` announces of the last stop, ready when they are done. The next run waits
+    /// for them, so that a tracker never gets a `started` before the `stopped` before it.
+    stopping: Option<Shared<BoxFuture<'static, ()>>>,
+    /// `completed` was sent (or the torrent was complete when it started): never again.
+    completed_sent: bool,
+    /// See [`TorrentTrackers::suppress_stopped`].
+    stopped_suppressed: bool,
 }
 
 /// A request to a tracker.
@@ -396,7 +442,10 @@ struct Outcome {
     min_interval: Option<Duration>,
     seeders: Option<u32>,
     leechers: Option<u32>,
-    peers: u32,
+    downloaded: Option<u32>,
+    addrs: Vec<SocketAddr>,
+    /// The `left` the request said.
+    left: u64,
     warning: Option<String>,
     tracker_id: Option<Vec<u8>>,
 }
@@ -420,13 +469,35 @@ impl JobResult {
 type JobFuture = BoxFuture<'static, (usize, Option<TrackerRequestEvent>, JobResult)>;
 type ScrapeFuture = BoxFuture<'static, (usize, ScrapeResult)>;
 
-fn count(n: u64) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
+/// A count from a tracker. Negative ones are nonsense and count as zero.
+fn count(n: i64) -> u32 {
+    u32::try_from(n.max(0)).unwrap_or(u32::MAX)
+}
+
+/// An interval a tracker asked for, capped.
+fn tracker_interval(secs: u64) -> Duration {
+    Duration::from_secs(secs).min(MAX_INTERVAL)
+}
+
+/// A text from a tracker, cut to [`MAX_TEXT_LEN`] bytes so that a tracker can't make us keep
+/// (and copy on every [`TorrentTrackers::stats`]) megabytes of it.
+fn bounded_text(mut s: String) -> String {
+    if s.len() > MAX_TEXT_LEN {
+        let mut end = MAX_TEXT_LEN;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+        s.push('…');
+    }
+    s
 }
 
 async fn read_body_limited(mut response: reqwest::Response) -> anyhow::Result<Vec<u8>> {
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
+    // `without_url`: the URL carries the passkey, the key and the tracker id, and the error
+    // ends up in `TrackerStats::last_error`.
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.without_url())? {
         if body.len() + chunk.len() > MAX_HTTP_RESPONSE_BYTES {
             bail!("tracker response is bigger than {MAX_HTTP_RESPONSE_BYTES} bytes");
         }
@@ -450,7 +521,6 @@ pub struct TorrentTrackers {
     key: u32,
     /// How many of the first tiers belong to the torrent (and not to the session).
     own_tiers: usize,
-    completed_sent: AtomicBool,
     inner: Mutex<Inner>,
 }
 
@@ -504,12 +574,14 @@ impl TorrentTrackers {
             enabled: params.enabled,
             key: rand::random(),
             own_tiers: own,
-            completed_sent: AtomicBool::new(false),
             inner: Mutex::new(Inner {
                 trackers,
                 tiers: tier_idx,
                 driver: None,
                 generation: 0,
+                stopping: None,
+                completed_sent: false,
+                stopped_suppressed: false,
             }),
         })
     }
@@ -555,17 +627,22 @@ impl TorrentTrackers {
     fn start(self: &Arc<Self>) -> BoxStream<'static, SocketAddr> {
         let (peer_tx, mut peer_rx) = mpsc::channel::<SocketAddr>(16);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let stats = self.stats_for_stop();
         {
             let mut g = self.inner.lock();
             // A running driver (it should not be) is replaced.
-            self.stop_locked(&mut g);
+            self.stop_locked(&mut g, stats);
             g.generation += 1;
             let generation = g.generation;
             g.driver = Some(DriverHandle { cmd_tx, generation });
             for t in g.trackers.iter_mut().filter(|t| !t.disabled) {
                 t.begin_run();
             }
-            tokio::spawn(self.clone().run_driver(generation, cmd_rx, peer_tx));
+            let previous_stop = g.stopping.clone();
+            tokio::spawn(
+                self.clone()
+                    .run_driver(generation, cmd_rx, peer_tx, previous_stop),
+            );
         }
         async_stream::stream! {
             while let Some(addr) = peer_rx.recv().await {
@@ -575,69 +652,141 @@ impl TorrentTrackers {
         .boxed()
     }
 
-    /// The torrent is paused, deleted, or the session stops: sends `stopped` to the trackers
-    /// that know about us, in the background and bounded in time, and stops announcing.
+    /// The torrent is paused, deleted, or the session stops: stops announcing, and sends
+    /// `stopped` to the trackers that know about us from a detached task, each bounded in
+    /// time (see [`Self::wait_stopped`]).
     pub fn stop(self: &Arc<Self>) {
+        let stats = self.stats_for_stop();
         let mut g = self.inner.lock();
-        self.stop_locked(&mut g);
+        self.stop_locked(&mut g, stats);
     }
 
-    fn stop_locked(self: &Arc<Self>, g: &mut Inner) {
+    /// Resolves when the `stopped` announces sent so far are done. They are bounded in time
+    /// by themselves; this is for a caller that must not go away before they are out, such as
+    /// a session that shuts down (the UDP tracker client stops with it).
+    pub fn wait_stopped(&self) -> BoxFuture<'static, ()> {
+        match self.inner.lock().stopping.clone() {
+            Some(stopping) => stopping.boxed(),
+            None => futures::future::ready(()).boxed(),
+        }
+    }
+
+    /// From now on, stopping sends no `stopped`. For an instance that only looked for peers
+    /// on behalf of a torrent that another instance already runs (a duplicate add, or a
+    /// list-only preview of it): the trackers can't tell the two apart, so its `stopped`
+    /// would take the running torrent out of the swarm.
+    pub fn suppress_stopped(&self) {
+        self.inner.lock().stopped_suppressed = true;
+    }
+
+    /// Forgets the tiers after the torrent's own (the trackers the session added), for a
+    /// torrent added by magnet that turned out to be private (BEP 27) once its metadata
+    /// arrived. The ones that were told `started` get a `stopped`.
+    pub fn drop_session_tiers(self: &Arc<Self>) {
+        let stats = self.stats_for_stop();
+        let mut g = self.inner.lock();
+        if g.tiers.len() <= self.own_tiers {
+            return;
+        }
+        let dropped: Vec<usize> = g.tiers.drain(self.own_tiers..).flatten().collect();
+        let mut jobs = Vec::new();
+        for id in dropped {
+            let t = &mut g.trackers[id];
+            jobs.extend(t.stopped_job(id, stats));
+            t.started_acked = false;
+            t.disabled = true;
+        }
+        if !g.stopped_suppressed {
+            self.spawn_stopped(&mut g, jobs);
+        }
+    }
+
+    /// The numbers for the `stopped` announces, taken when the torrent stops (a deleted
+    /// torrent has none afterwards). Read before `inner` is locked, and only when there is a
+    /// driver to stop: the provider takes the torrent's locks, and the torrent calls
+    /// [`Self::completed`] with them held, so `inner` must never be held while calling it.
+    fn stats_for_stop(&self) -> Option<TrackerCommsStats> {
+        let running = self.inner.lock().driver.is_some();
+        running.then(|| self.stats.get())
+    }
+
+    /// `stats` comes from [`Self::stats_for_stop`]; when None (the driver started after it
+    /// was read), the `stopped` announces read the provider when they go out.
+    fn stop_locked(self: &Arc<Self>, g: &mut Inner, stats: Option<TrackerCommsStats>) {
         let Some(driver) = g.driver.take() else {
             return;
         };
+        // A driver that has finished already has nothing to stop.
         let _ = driver.cmd_tx.send(Command::Stop);
-        let stats = self.stats.get();
         let mut jobs = Vec::new();
         for (id, t) in g.trackers.iter_mut().enumerate() {
-            if t.started_acked || (t.in_flight && t.needs_started) {
-                jobs.push(Job {
-                    id,
-                    url: t.url.clone(),
-                    kind: t.kind,
-                    event: Some(TrackerRequestEvent::Stopped),
-                    tracker_id: t.tracker_id.clone(),
-                    resolved: t.resolved,
-                    no_peers: true,
-                    stats: Some(stats),
-                });
-            }
+            jobs.extend(t.stopped_job(id, stats));
             t.started_acked = false;
             t.in_flight = false;
             t.next_at = None;
             t.scrape_in_flight = false;
             t.scrape_wanted = false;
         }
+        if !g.stopped_suppressed {
+            self.spawn_stopped(g, jobs);
+        }
+    }
+
+    /// Sends `stopped` announces from a detached task, so that whoever stops the torrent
+    /// never waits for a dead tracker, and remembers them in `stopping`.
+    fn spawn_stopped(self: &Arc<Self>, g: &mut Inner, jobs: Vec<Job>) {
         if jobs.is_empty() {
             return;
         }
         let this = self.clone();
         let timeout = self.timings.stopped_timeout;
-        tokio::spawn(
+        let task = tokio::spawn(
             async move {
                 futures::future::join_all(
-                    jobs.into_iter()
-                        .map(|job| this.job_future(job, None, timeout)),
+                    jobs.into_iter().map(|job| this.job_future(job, timeout)),
                 )
                 .await;
             }
             .instrument(debug_span!(parent: None, "tracker_stopped", info_hash = ?self.info_hash)),
+        );
+        // Stops that are still going on are waited for as well; finished ones are let go, so
+        // that the chain does not grow with every pause.
+        let previous = g.stopping.take().filter(|s| s.peek().is_none());
+        g.stopping = Some(
+            async move {
+                if let Err(e) = task.await {
+                    debug!("the stopped announces failed: {e:#}");
+                }
+                if let Some(previous) = previous {
+                    previous.await;
+                }
+            }
+            .boxed()
+            .shared(),
         );
     }
 
     /// The download finished while the torrent was running. Sends `completed`, once for the
     /// life of the torrent.
     pub fn completed(&self) {
-        if self.completed_sent.swap(true, Ordering::AcqRel) {
+        let mut g = self.inner.lock();
+        if g.completed_sent {
             return;
         }
-        if let Some(d) = &self.inner.lock().driver {
-            let _ = d.cmd_tx.send(Command::Completed);
+        // Without a driver (the torrent is stopping) nobody would send it: it is not marked
+        // as sent then.
+        let accepted = g
+            .driver
+            .as_ref()
+            .is_some_and(|d| d.cmd_tx.send(Command::Completed).is_ok());
+        if accepted {
+            g.completed_sent = true;
         }
     }
 
-    /// Announces to the trackers in use now, without waiting for the interval, but never more
-    /// often than the reannounce floor of the tracker.
+    /// Announces to the trackers in use now, without waiting for the interval, and retries
+    /// the ones that failed without waiting for their backoff, but never more often than the
+    /// reannounce floor of the tracker.
     pub fn reannounce(&self) -> anyhow::Result<()> {
         match &self.inner.lock().driver {
             Some(d) => d
@@ -685,7 +834,7 @@ impl TorrentTrackers {
                     last_announce: t.last_announce,
                     next_announce: match (running, t.next_at) {
                         (true, Some(n)) if !t.in_flight && !t.disabled => {
-                            Some(now_sys + n.saturating_duration_since(now))
+                            now_sys.checked_add(n.saturating_duration_since(now))
                         }
                         _ => None,
                     },
@@ -704,19 +853,29 @@ impl TorrentTrackers {
         generation: u64,
         mut cmd_rx: mpsc::UnboundedReceiver<Command>,
         peer_tx: mpsc::Sender<SocketAddr>,
+        previous_stop: Option<Shared<BoxFuture<'static, ()>>>,
     ) {
+        // The `stopped` of the last run goes out before the `started` of this one: a tracker
+        // that gets them the other way round forgets us until the next announce.
+        if let Some(previous) = previous_stop
+            && tokio::time::timeout(self.timings.stopped_timeout, previous)
+                .await
+                .is_err()
+        {
+            debug!(info_hash = ?self.info_hash, "the stopped announces of the last run are late, starting anyway");
+        }
         let mut in_flight: FuturesUnordered<JobFuture> = FuturesUnordered::new();
         let mut scrapes: FuturesUnordered<ScrapeFuture> = FuturesUnordered::new();
+        // Peers the trackers returned, waiting for the torrent to take them. Handing them over
+        // is not part of a request, so that a torrent that does not take peers for a while
+        // (it checks its files) does not make the requests time out.
+        let mut pending: VecDeque<SocketAddr> = VecDeque::new();
         loop {
             let Some((jobs, scrape_jobs, wake)) = self.plan(generation) else {
                 return;
             };
             for job in jobs {
-                in_flight.push(self.job_future(
-                    job,
-                    Some(peer_tx.clone()),
-                    self.timings.request_timeout,
-                ));
+                in_flight.push(self.job_future(job, self.timings.request_timeout));
             }
             for job in scrape_jobs {
                 scrapes.push(self.scrape_future(job, self.timings.request_timeout));
@@ -729,25 +888,53 @@ impl TorrentTrackers {
             };
             tokio::select! {
                 _ = peer_tx.closed() => {
-                    // Nobody listens to the peers: the torrent went away without telling us.
-                    let mut g = self.inner.lock();
-                    if g.driver.as_ref().is_some_and(|d| d.generation == generation) {
-                        self.stop_locked(&mut g);
-                    }
+                    self.on_peers_closed(generation);
                     return;
                 }
+                permit = peer_tx.reserve(), if !pending.is_empty() => match permit {
+                    Ok(permit) => {
+                        if let Some(addr) = pending.pop_front() {
+                            permit.send(addr);
+                        }
+                        // Whatever else fits goes too, without a trip through the planner.
+                        while let Some(&addr) = pending.front() {
+                            if peer_tx.try_send(addr).is_err() {
+                                break;
+                            }
+                            pending.pop_front();
+                        }
+                    }
+                    Err(_) => {
+                        self.on_peers_closed(generation);
+                        return;
+                    }
+                },
                 cmd = cmd_rx.recv() => match cmd {
                     None | Some(Command::Stop) => return,
                     Some(cmd) => self.handle_command(generation, cmd),
                 },
                 Some((id, event, result)) = in_flight.next(), if !in_flight.is_empty() => {
-                    self.apply(generation, id, event, result);
+                    let addrs = self.apply(generation, id, event, result);
+                    let room = MAX_PENDING_PEERS.saturating_sub(pending.len());
+                    pending.extend(addrs.into_iter().take(room));
                 }
                 Some((id, result)) = scrapes.next(), if !scrapes.is_empty() => {
                     self.apply_scrape(generation, id, result);
                 }
                 _ = sleep => {}
             }
+        }
+    }
+
+    /// Nobody listens to the peers: the torrent went away without telling us.
+    fn on_peers_closed(self: &Arc<Self>, generation: u64) {
+        let stats = self.stats_for_stop();
+        let mut g = self.inner.lock();
+        if g.driver
+            .as_ref()
+            .is_some_and(|d| d.generation == generation)
+        {
+            self.stop_locked(&mut g, stats);
         }
     }
 
@@ -830,7 +1017,10 @@ impl TorrentTrackers {
         match cmd {
             Command::Stop => {}
             Command::Completed => {
-                for t in g.trackers.iter_mut().filter(|t| t.started_acked) {
+                // Every tracker gets it, including the ones whose `started` is in flight or
+                // still to be sent: `apply` drops it only after a `started` that already said
+                // nothing is left.
+                for t in g.trackers.iter_mut().filter(|t| !t.disabled) {
                     t.pending_completed = true;
                     if !t.in_flight && t.state == TrackerState::Working {
                         t.next_at = Some(now);
@@ -838,12 +1028,17 @@ impl TorrentTrackers {
                 }
             }
             Command::Reannounce => {
+                // The trackers that failed and wait for their retry are retried too, as
+                // libtorrent's `force_reannounce` does: they are the ones that need it most.
+                for t in g.trackers.iter_mut() {
+                    if t.availability(now) == Availability::Waiting {
+                        t.next_at = Some(t.earliest_reannounce(&self.timings, now));
+                    }
+                }
                 for id in self.in_use(&g, now) {
-                    let floor = g.trackers[id].reannounce_floor(&self.timings);
                     let t = &mut g.trackers[id];
                     if !t.in_flight {
-                        let earliest = t.last_attempt.map_or(now, |l| l + floor);
-                        t.next_at = Some(earliest.max(now));
+                        t.next_at = Some(t.earliest_reannounce(&self.timings, now));
                     }
                 }
             }
@@ -870,7 +1065,7 @@ impl TorrentTrackers {
             (None, None) => DEFAULT_INTERVAL,
         }
         .max(MIN_INTERVAL);
-        self.force_interval.unwrap_or(interval)
+        self.force_interval.unwrap_or(interval).min(MAX_INTERVAL)
     }
 
     fn retry_delay(&self, fails: u32) -> Duration {
@@ -883,16 +1078,17 @@ impl TorrentTrackers {
         base + base.mul_f64(rand::random::<f64>() * 0.5)
     }
 
+    /// Records the result of an announce, and returns the peers it brought.
     fn apply(
         &self,
         generation: u64,
         id: usize,
         event: Option<TrackerRequestEvent>,
         result: JobResult,
-    ) {
+    ) -> Vec<SocketAddr> {
         let mut g = self.inner.lock();
         if g.driver.as_ref().map(|d| d.generation) != Some(generation) {
-            return;
+            return Vec::new();
         }
         let now = Instant::now();
         let t = &mut g.trackers[id];
@@ -901,26 +1097,33 @@ impl TorrentTrackers {
             t.resolved = result.resolved;
         }
         let mut promote = false;
+        let mut addrs = Vec::new();
         match result.result {
             Ok(outcome) => {
+                let interval = self.next_interval(&outcome);
                 promote = t.state != TrackerState::Working;
                 t.state = TrackerState::Working;
                 t.fails = 0;
                 t.last_error = None;
-                t.warning = outcome.warning.clone();
                 t.last_announce = Some(SystemTime::now());
-                t.peers_received = Some(outcome.peers);
+                t.peers_received = Some(u32::try_from(outcome.addrs.len()).unwrap_or(u32::MAX));
                 t.seeders = outcome.seeders.or(t.seeders);
                 t.leechers = outcome.leechers.or(t.leechers);
+                t.downloaded = outcome.downloaded.or(t.downloaded);
+                t.warning = outcome.warning;
                 if outcome.tracker_id.is_some() {
-                    t.tracker_id = outcome.tracker_id.clone();
+                    t.tracker_id = outcome.tracker_id;
                 }
                 t.min_interval = outcome.min_interval;
                 match event {
                     Some(TrackerRequestEvent::Started) => {
                         t.needs_started = false;
                         t.started_acked = true;
-                        t.pending_completed = false;
+                        // A `started` that said nothing is left makes `completed` pointless;
+                        // one sent before the download finished does not.
+                        if outcome.left == 0 {
+                            t.pending_completed = false;
+                        }
                     }
                     Some(TrackerRequestEvent::Completed) => t.pending_completed = false,
                     _ => {}
@@ -930,21 +1133,23 @@ impl TorrentTrackers {
                 t.next_at = Some(if t.pending_completed {
                     now
                 } else {
-                    now + self.next_interval(&outcome)
+                    now + interval
                 });
-                // A tracker that can be scraped is, once per announce interval.
-                if t.scrapable
-                    && event != Some(TrackerRequestEvent::Stopped)
+                // A tracker that can be scraped is, once per announce interval, unless the
+                // announce gave all the numbers already.
+                if t.auto_scrape
+                    && outcome.downloaded.is_none()
                     && t.last_scrape
-                        .is_none_or(|l| now.duration_since(l) >= self.next_interval(&outcome))
+                        .is_none_or(|l| now.duration_since(l) >= interval)
                 {
                     t.scrape_wanted = true;
                 }
+                addrs = outcome.addrs;
             }
             Err(e) => {
                 t.state = TrackerState::Error;
                 t.fails = t.fails.saturating_add(1);
-                t.last_error = Some(format!("{e:#}"));
+                t.last_error = Some(bounded_text(format!("{e:#}")));
                 t.warning = None;
                 t.next_at = Some(now + self.retry_delay(t.fails));
                 if result.panicked {
@@ -958,6 +1163,7 @@ impl TorrentTrackers {
         {
             tier[..=pos].rotate_right(1);
         }
+        addrs
     }
 
     fn apply_scrape(&self, generation: u64, id: usize, result: ScrapeResult) {
@@ -978,19 +1184,18 @@ impl TorrentTrackers {
                 t.leechers = c.leechers.or(t.leechers);
                 t.downloaded = c.downloaded.or(t.downloaded);
             }
-            Err(e) => debug!(tracker = %t.url, "scrape failed: {e:#}"),
+            Err(e) => {
+                // Most likely the tracker does not do scrapes: stop asking by ourselves.
+                t.auto_scrape = false;
+                debug!(tracker = %t.url, "scrape failed: {e:#}");
+            }
         }
     }
 
     /// One request to one tracker, isolated from the others: a panic inside of it (e.g. in
     /// a TLS verifier) disables the tracker instead of taking the torrent's peer discovery
     /// down.
-    fn job_future(
-        self: &Arc<Self>,
-        job: Job,
-        peers: Option<mpsc::Sender<SocketAddr>>,
-        timeout: Duration,
-    ) -> JobFuture {
+    fn job_future(self: &Arc<Self>, job: Job, timeout: Duration) -> JobFuture {
         let this = self.clone();
         let span = match job.kind {
             Kind::Udp => {
@@ -1007,11 +1212,11 @@ impl TorrentTrackers {
             let work = async {
                 match job.kind {
                     Kind::Http => JobResult {
-                        result: this.announce_http(&job, peers.as_ref()).await,
+                        result: this.announce_http(&job).await,
                         resolved: None,
                         panicked: false,
                     },
-                    Kind::Udp => this.announce_udp(&job, peers.as_ref()).await,
+                    Kind::Udp => this.announce_udp(&job).await,
                     Kind::Unsupported => JobResult::failed(anyhow::anyhow!("unsupported tracker")),
                 }
             };
@@ -1054,19 +1259,16 @@ impl TorrentTrackers {
         job.stats.unwrap_or_else(|| self.stats.get())
     }
 
-    async fn announce_http(
-        &self,
-        job: &Job,
-        peers: Option<&mpsc::Sender<SocketAddr>>,
-    ) -> anyhow::Result<Outcome> {
+    async fn announce_http(&self, job: &Job) -> anyhow::Result<Outcome> {
         let stats = self.stats_for(job);
+        let left = stats.get_left_to_download_bytes();
         let request = tracker_comms_http::TrackerRequest {
             info_hash: &self.info_hash,
             peer_id: &self.peer_id,
             port: self.announce_port,
             uploaded: stats.uploaded_bytes,
             downloaded: stats.downloaded_bytes,
-            left: stats.get_left_to_download_bytes(),
+            left,
             compact: true,
             no_peer_id: false,
             event: job.event,
@@ -1083,22 +1285,24 @@ impl TorrentTrackers {
         }
         url.set_query(Some(&queries));
 
-        let response: reqwest::Response = self.reqwest_client.get(url).send().await?;
+        // `without_url`: the URL carries the passkey, the key and the tracker id, and the
+        // error ends up in `TrackerStats::last_error`.
+        let response: reqwest::Response = self
+            .reqwest_client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| e.without_url())?;
         if !response.status().is_success() {
             anyhow::bail!("tracker responded with {:?}", response.status());
         }
         let bytes = read_body_limited(response).await?;
-        let outcome = parse_http_announce(&bytes)?;
-        let (outcome, addrs) = outcome;
-        if let Some(peers) = peers {
-            for addr in addrs {
-                peers.send(addr).await.context("rx closed")?;
-            }
-        }
+        let mut outcome = parse_http_announce(&bytes)?;
+        outcome.left = left;
         Ok(outcome)
     }
 
-    async fn announce_udp(&self, job: &Job, peers: Option<&mpsc::Sender<SocketAddr>>) -> JobResult {
+    async fn announce_udp(&self, job: &Job) -> JobResult {
         let (host, port) = match (job.url.host(), job.url.port()) {
             (Some(h), Some(p)) => (h, p),
             _ => return JobResult::failed(anyhow::anyhow!("tracker URL needs a host and a port")),
@@ -1119,13 +1323,13 @@ impl TorrentTrackers {
         let stats = self.stats_for(job);
         let result = match resolved {
             UdpTrackerResolveResult::One(addr) => {
-                self.announce_udp_endpoint(addr, job, &stats, peers).await
+                self.announce_udp_endpoint(addr, job, &stats).await
             }
             UdpTrackerResolveResult::Two(v4, v6) => {
                 let (r4, r6) = tokio::join!(
-                    self.announce_udp_endpoint(v4.into(), job, &stats, peers)
+                    self.announce_udp_endpoint(v4.into(), job, &stats)
                         .instrument(trace_span!("udp request", addr=?v4)),
-                    self.announce_udp_endpoint(v6.into(), job, &stats, peers)
+                    self.announce_udp_endpoint(v6.into(), job, &stats)
                         .instrument(trace_span!("udp request", addr=?v6)),
                 );
                 merge_endpoints(r4, r6)
@@ -1143,14 +1347,14 @@ impl TorrentTrackers {
         addr: SocketAddr,
         job: &Job,
         stats: &TrackerCommsStats,
-        peers: Option<&mpsc::Sender<SocketAddr>>,
     ) -> anyhow::Result<Outcome> {
         use tracker_comms_udp::*;
+        let left = stats.get_left_to_download_bytes();
         let request = AnnounceFields {
             info_hash: self.info_hash,
             peer_id: self.peer_id,
             downloaded: stats.downloaded_bytes,
-            left: stats.get_left_to_download_bytes(),
+            left,
             uploaded: stats.uploaded_bytes,
             event: match job.event {
                 None => EVENT_NONE,
@@ -1165,17 +1369,12 @@ impl TorrentTrackers {
         match self.udp_client.announce(addr, request).await {
             Ok(response) => {
                 trace!(len = response.addrs.len(), "received announce response");
-                let n = u32::try_from(response.addrs.len()).unwrap_or(u32::MAX);
-                if let Some(peers) = peers {
-                    for addr in response.addrs {
-                        peers.send(addr).await.context("rx closed")?;
-                    }
-                }
                 Ok(Outcome {
-                    interval: Some(Duration::from_secs(response.interval as u64)),
+                    interval: Some(tracker_interval(u64::from(response.interval))),
                     seeders: Some(response.seeders),
                     leechers: Some(response.leechers),
-                    peers: n,
+                    addrs: response.addrs,
+                    left,
                     ..Default::default()
                 })
             }
@@ -1235,7 +1434,12 @@ impl TorrentTrackers {
     async fn scrape_http(&self, job: &ScrapeJob) -> anyhow::Result<ScrapeCounts> {
         let url = scrape::scrape_url(&job.url, &self.info_hash)
             .context("the tracker can't be scraped")?;
-        let response = self.reqwest_client.get(url).send().await?;
+        let response = self
+            .reqwest_client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| e.without_url())?;
         if !response.status().is_success() {
             anyhow::bail!("tracker responded with {:?}", response.status());
         }
@@ -1299,13 +1503,13 @@ impl TorrentTrackers {
     }
 }
 
-/// Parses an announce response of an HTTP tracker.
-fn parse_http_announce(bytes: &[u8]) -> anyhow::Result<(Outcome, Vec<SocketAddr>)> {
+/// Parses an announce response of an HTTP tracker. `left` is left at 0 for the caller.
+fn parse_http_announce(bytes: &[u8]) -> anyhow::Result<Outcome> {
     if let Ok((error, _)) = bencode::from_bytes_with_rest::<tracker_comms_http::TrackerError>(bytes)
     {
         anyhow::bail!(
             "tracker returned failure. Failure reason: {}",
-            error.failure_reason
+            bounded_text(error.failure_reason.to_string())
         )
     };
     let response = bencode::from_bytes_with_rest::<tracker_comms_http::TrackerResponse>(bytes)
@@ -1314,19 +1518,23 @@ fn parse_http_announce(bytes: &[u8]) -> anyhow::Result<(Outcome, Vec<SocketAddr>
             e.into_kind()
         })?
         .0;
-    let addrs: Vec<_> = response.iter_peers().collect();
-    let outcome = Outcome {
-        interval: response.interval.map(Duration::from_secs),
-        min_interval: response.min_interval.map(Duration::from_secs),
+    Ok(Outcome {
+        interval: response.interval.map(tracker_interval),
+        min_interval: response.min_interval.map(tracker_interval),
         seeders: response.complete.map(count),
         leechers: response.incomplete.map(count),
-        peers: u32::try_from(addrs.len()).unwrap_or(u32::MAX),
+        downloaded: response.downloaded.map(count),
+        addrs: response.iter_peers().collect(),
+        left: 0,
         warning: response
             .warning_message
-            .map(|w| String::from_utf8_lossy(w.as_ref()).into_owned()),
-        tracker_id: response.tracker_id.map(|id| id.as_ref().to_vec()),
-    };
-    Ok((outcome, addrs))
+            .map(|w| bounded_text(String::from_utf8_lossy(w.as_ref()).into_owned())),
+        // An id too long to be a real one is not worth sending back with every announce.
+        tracker_id: response
+            .tracker_id
+            .filter(|id| id.as_ref().len() <= MAX_TRACKER_ID_LEN)
+            .map(|id| id.as_ref().to_vec()),
+    })
 }
 
 /// A tracker that resolves to an IPv4 and an IPv6 address is announced to on both. It works
@@ -1336,18 +1544,23 @@ fn merge_endpoints(
     b: anyhow::Result<Outcome>,
 ) -> anyhow::Result<Outcome> {
     match (a, b) {
-        (Ok(a), Ok(b)) => Ok(Outcome {
-            interval: match (a.interval, b.interval) {
-                (Some(x), Some(y)) => Some(x.min(y)),
-                (x, y) => x.or(y),
-            },
-            min_interval: a.min_interval.max(b.min_interval),
-            seeders: a.seeders.max(b.seeders),
-            leechers: a.leechers.max(b.leechers),
-            peers: a.peers.saturating_add(b.peers),
-            warning: a.warning.or(b.warning),
-            tracker_id: a.tracker_id.or(b.tracker_id),
-        }),
+        (Ok(mut a), Ok(b)) => {
+            a.addrs.extend(b.addrs);
+            Ok(Outcome {
+                interval: match (a.interval, b.interval) {
+                    (Some(x), Some(y)) => Some(x.min(y)),
+                    (x, y) => x.or(y),
+                },
+                min_interval: a.min_interval.max(b.min_interval),
+                seeders: a.seeders.max(b.seeders),
+                leechers: a.leechers.max(b.leechers),
+                downloaded: a.downloaded.max(b.downloaded),
+                addrs: a.addrs,
+                left: a.left,
+                warning: a.warning.or(b.warning),
+                tracker_id: a.tracker_id.or(b.tracker_id),
+            })
+        }
         (Ok(a), Err(_)) => Ok(a),
         (Err(_), Ok(b)) => Ok(b),
         (Err(a), Err(b)) => Err(anyhow::anyhow!("IPv4: {a:#}; IPv6: {b:#}")),
