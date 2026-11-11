@@ -108,6 +108,9 @@ pub use buffers::*;
 pub use clone_to_owned::CloneToOwned;
 pub use librqbit_core::magnet::*;
 pub use librqbit_core::peer_id::*;
+/// The parsed form of [`ConnectionOptions::proxy_url`], re-exported so that a proxy URL can be
+/// checked (and shown without its password) before a session is created with it.
+pub use librqbit_core::proxy::{ProxyConfig, ProxyKind, ProxyUrlError};
 pub use librqbit_core::torrent_metainfo::*;
 
 #[cfg(test)]
