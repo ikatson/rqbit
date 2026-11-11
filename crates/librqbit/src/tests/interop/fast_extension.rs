@@ -252,10 +252,13 @@ async fn test_interop_fast_libtorrent_chokes_mid_download() -> anyhow::Result<()
             json!({"upload_rate_limit": 128 * 1024, "unchoke_interval": 1}),
         )
         .await?;
+        // A read timeout far longer than the test: the safety net for a peer that chokes and
+        // answers nothing (half of it) cannot be what gives the requests back.
         let client = start_client(
             &seed,
             ClientOpts {
                 initial_peers: vec![addr],
+                read_write_timeout: Some(Duration::from_secs(60)),
                 ..Default::default()
             },
         )
@@ -284,6 +287,20 @@ async fn test_interop_fast_libtorrent_chokes_mid_download() -> anyhow::Result<()
         }
         let at_choke = progress();
         assert!(at_choke < total, "finished before the choke");
+        // libtorrent answers what rqbit asked for with rejects (or the blocks it was already
+        // sending), and rqbit forgets each answered request: nothing stays in flight while
+        // libtorrent keeps rqbit choked.
+        wait_until(
+            || {
+                let live = client.handle.live().context("not live")?;
+                let inflight = live.inflight_requests_to(addr);
+                anyhow::ensure!(inflight == Some(0), "in flight to libtorrent: {inflight:?}");
+                Ok(())
+            },
+            WAIT,
+        )
+        .await?;
+        assert!(progress() < total, "finished while choked");
 
         lt.send(&json!({"cmd": "settings", "settings": {"unchoke_slots_limit": 8}}))
             .await?;

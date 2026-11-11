@@ -910,6 +910,13 @@ impl TorrentStateLive {
         }
     }
 
+    /// The requests we sent the live peer at `addr` and still wait an answer for.
+    #[cfg(test)]
+    pub(crate) fn inflight_requests_to(&self, addr: PeerHandle) -> Option<usize> {
+        self.peers
+            .with_live(addr, |live| live.requested_inflight_count())
+    }
+
     pub async fn wait_until_completed(&self) {
         if self.is_finished() {
             return;
