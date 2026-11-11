@@ -8,7 +8,21 @@ use super::fake_peer::{
     BLOCK, ClientOpts, FakePeer, Fixture, Recv, SeederOpts, Wire, peer_id, run, start_client,
     start_seeder, uploaded,
 };
-use crate::UploadSlots;
+use crate::{UploadSlots, tests::test_util::wait_until};
+
+// A block is counted as uploaded once the write returns, which may be after the peer has read
+// it: the counter is waited for.
+async fn expect_uploaded(seed: &Fixture, bytes: u64) -> anyhow::Result<()> {
+    wait_until(
+        || {
+            let got = uploaded(seed);
+            anyhow::ensure!(got == bytes, "uploaded {got}, expected {bytes}");
+            Ok(())
+        },
+        Duration::from_secs(5),
+    )
+    .await
+}
 
 fn fixed(slots: u32) -> UploadSlots {
     UploadSlots::Fixed(NonZeroU32::new(slots).unwrap())
@@ -61,7 +75,7 @@ async fn test_only_peers_with_an_upload_slot_are_served() -> anyhow::Result<()> 
         b.request(0, 0, BLOCK).await?;
         let pieces = b.expect_pieces(1, Duration::from_secs(10)).await?;
         assert_eq!((pieces[0].0, pieces[0].1), (0, 0));
-        assert_eq!(uploaded(&seed), 2 * BLOCK as u64);
+        expect_uploaded(&seed, 2 * BLOCK as u64).await?;
         Ok(())
     })
     .await
@@ -100,12 +114,12 @@ async fn test_losing_interest_drops_the_queue_and_frees_the_slot() -> anyhow::Re
         let (rest, closed) = a.collect(Duration::from_millis(2500)).await;
         assert!(!closed);
         assert!(no_pieces(&rest), "sent after the choke: {rest:?}");
-        assert_eq!(uploaded(&seed), BLOCK as u64);
+        expect_uploaded(&seed, BLOCK as u64).await?;
 
         b.request(1, 0, BLOCK).await?;
         let pieces = b.expect_pieces(1, Duration::from_secs(10)).await?;
         assert_eq!((pieces[0].0, pieces[0].1), (1, 0));
-        assert_eq!(uploaded(&seed), 2 * BLOCK as u64);
+        expect_uploaded(&seed, 2 * BLOCK as u64).await?;
         Ok(())
     })
     .await
