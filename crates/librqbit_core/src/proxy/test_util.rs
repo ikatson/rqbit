@@ -18,7 +18,7 @@ use std::{
 use parking_lot::Mutex;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream, UdpSocket},
+    net::{TcpListener, TcpSocket, TcpStream, UdpSocket},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
@@ -100,6 +100,9 @@ pub struct RelayedDatagram {
 struct Log {
     connections: Vec<RelayedConnection>,
     datagrams: Vec<RelayedDatagram>,
+    /// The proxy's outgoing TCP sockets and UDP relay sockets, each put here before it can
+    /// reach a destination.
+    egress: HashSet<SocketAddr>,
     datagrams_to_client: usize,
     fragments_dropped: usize,
     associations: usize,
@@ -311,15 +314,11 @@ impl FakeProxy {
         self.shared.log.lock().accepted
     }
 
-    /// The source addresses the destinations saw: the proxy's outgoing TCP connections and
-    /// its UDP relay sockets.
+    /// The source addresses the destinations may have seen: the proxy's outgoing TCP connections
+    /// and its UDP relay sockets. Each is recorded before it can reach a destination, so a source
+    /// a destination saw that is not here was never the proxy, however busy the machine.
     pub fn egress_addrs(&self) -> HashSet<SocketAddr> {
-        let log = self.shared.log.lock();
-        log.connections
-            .iter()
-            .map(|c| c.from)
-            .chain(log.datagrams.iter().map(|d| d.from))
-            .collect()
+        self.shared.log.lock().egress.clone()
     }
 }
 
@@ -372,7 +371,23 @@ async fn resolve(target: &str) -> R<SocketAddr> {
 
 async fn connect_and_log(target: &str, shared: &Shared) -> R<TcpStream> {
     let addr = resolve(target).await?;
-    let out = TcpStream::connect(addr).await?;
+    // Bound first, so that the source address is in the log before the destination can accept
+    // the connection: a test that looks at the log right after the destination saw a source must
+    // find it there.
+    let (socket, unspecified): (_, IpAddr) = if addr.is_ipv4() {
+        (TcpSocket::new_v4()?, Ipv4Addr::UNSPECIFIED.into())
+    } else {
+        (TcpSocket::new_v6()?, Ipv6Addr::UNSPECIFIED.into())
+    };
+    let local_ip = if addr.ip().is_loopback() {
+        addr.ip()
+    } else {
+        unspecified
+    };
+    socket.bind(SocketAddr::new(local_ip, 0))?;
+    let from = socket.local_addr()?;
+    shared.log.lock().egress.insert(from);
+    let out = socket.connect(addr).await?;
     shared.log.lock().connections.push(RelayedConnection {
         target: target.to_owned(),
         from: out.local_addr()?,
@@ -517,6 +532,7 @@ async fn serve_udp_association(
     } else {
         relay_addr
     };
+    shared.log.lock().egress.insert(relay_addr);
     socks5_reply(control, 0, bound).await?;
     shared.log.lock().associations += 1;
 
