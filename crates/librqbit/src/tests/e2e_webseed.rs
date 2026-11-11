@@ -475,6 +475,15 @@ async fn test_web_seed_alone_multi_file_nested_and_padded() -> anyhow::Result<()
         assert_eq!(seed.url, url);
         assert_eq!(seed.downloaded_bytes, torrent.content_len());
         assert_eq!(client.checked_pieces(), torrent.pieces);
+        // The zeros of the padding file never crossed the network and do not count.
+        let fetched = client
+            .handle
+            .live()
+            .context("not live")?
+            .stats_snapshot()
+            .fetched_bytes;
+        assert_eq!(fetched, torrent.content_len());
+        assert_eq!(server.body_bytes(), torrent.content_len());
         for s in server.log() {
             assert!(
                 (0..torrent.files.len()).any(|i| s.path == torrent.url_path(i)),

@@ -1816,30 +1816,38 @@ impl PeerHandler {
             return Ok(());
         }
         self.state
-            .process_received_chunk(self.addr, &self.counters, &piece, &chunk_info)
+            .process_received_chunk(
+                self.addr,
+                &self.counters,
+                &piece,
+                &chunk_info,
+                piece.len() as u64,
+            )
             .await
     }
 }
 
 impl TorrentStateLive {
     /// Counts, writes and, when it completes its piece, verifies a chunk that `addr` (a peer
-    /// or a web seed) sent. Fails with [`crate::webseed::PieceHashFailed`] when the piece it
-    /// completed failed the hash check (the piece is back in the queue then).
+    /// or a web seed) sent; `received` of its bytes came over the network (a web seed does not
+    /// ask for the zeros of padding files). Fails with [`crate::webseed::PieceHashFailed`] when
+    /// the piece it completed failed the hash check (the piece is back in the queue then).
     pub(crate) async fn process_received_chunk(
         &self,
         addr: PeerHandle,
         counters: &AtomicPeerCounters,
         piece: &Piece<ByteBuf<'_>>,
         chunk_info: &ChunkInfo,
+        received: u64,
     ) -> anyhow::Result<()> {
         // This one is used to calculate download speed.
         self.stats
             .fetched_bytes
-            .fetch_add(piece.len() as u64, Ordering::Relaxed);
+            .fetch_add(received, Ordering::Relaxed);
         self.session_stats
             .counters
             .fetched_bytes
-            .fetch_add(piece.len() as u64, Ordering::Relaxed);
+            .fetch_add(received, Ordering::Relaxed);
 
         fn write_to_disk(
             state: &TorrentStateLive,

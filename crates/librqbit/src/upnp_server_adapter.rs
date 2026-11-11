@@ -397,6 +397,7 @@ mod tests {
             info: bencode::WithRawBytes {
                 data: TorrentMetaV1Info {
                     name: name.map(|n| n.as_bytes().into()),
+                    name_utf8: None,
                     pieces: b""[..].into(),
                     piece_length: 1,
                     length: None,
@@ -407,6 +408,7 @@ mod tests {
                             .map(|f| TorrentMetaV1File {
                                 length: 1,
                                 path: f.split("/").map(|f| f.as_bytes().into()).collect(),
+                                path_utf8: None,
                                 attr: None,
                                 sha1: None,
                                 symlink_path: None,
@@ -427,6 +429,7 @@ mod tests {
             publisher_url: None,
             creation_date: None,
             info_hash: Id20::default(),
+            url_list: Vec::new(),
         }
     }
 

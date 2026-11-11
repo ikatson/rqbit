@@ -10,6 +10,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
+use bitvec::{order::Msb0, vec::BitVec};
 use buffers::{ByteBuf, ByteBufOwned};
 use futures::{StreamExt, stream::FuturesUnordered};
 use librqbit_core::{
@@ -30,6 +31,7 @@ use crate::{
     torrent_state::{
         TorrentStateLive, live::peer::stats::atomic::PeerCountersAtomic as AtomicPeerCounters,
     },
+    type_aliases::BF,
 };
 
 use super::{PieceHashFailed, WebSeed, WebSeedState};
@@ -184,11 +186,16 @@ struct Worker<'a> {
     urls: Vec<Option<String>>,
     /// Files this web seed answered "not found" (or alike) for.
     unavailable: Vec<bool>,
+    /// Pieces with bytes in an unavailable file: the picker asks about every queued piece
+    /// under the torrent's lock, so this is a lookup.
+    unservable: BF,
     counters: AtomicPeerCounters,
     timeout: Duration,
     max_pieces: usize,
     hash_failures: u32,
     transient_failures: u32,
+    /// Files found missing since the last run that went through.
+    file_misses: u32,
 }
 
 impl<'a> Worker<'a> {
@@ -201,6 +208,11 @@ impl<'a> Worker<'a> {
             seed,
             client,
             unavailable: vec![false; urls.len()],
+            unservable: BitVec::<u8, Msb0>::repeat(
+                false,
+                usize::try_from(state.lengths().total_pieces()).unwrap_or(0),
+            )
+            .into_boxed_bitslice(),
             urls,
             counters: AtomicPeerCounters::default(),
             timeout: state
@@ -212,17 +224,29 @@ impl<'a> Worker<'a> {
                 .unwrap_or(1),
             hash_failures: 0,
             transient_failures: 0,
+            file_misses: 0,
         })
     }
 
     /// Whether every file `piece` has bytes in may be asked from this web seed.
     fn can_serve(&self, piece: ValidPieceIndex) -> bool {
-        !self
-            .state
-            .file_infos()
+        !self.unservable.get(piece.get_usize()).is_some_and(|b| *b)
+    }
+
+    /// Remembers that this web seed lacks `file`. Whether it has any file left.
+    fn mark_unavailable(&mut self, file: usize) -> bool {
+        if let Some(u) = self.unavailable.get_mut(file) {
+            *u = true;
+        }
+        if let Some(info) = self.state.file_infos().get(file)
+            && let Some(bits) = self.unservable.get_mut(info.piece_range_usize())
+        {
+            bits.fill(true);
+        }
+        self.urls
             .iter()
             .zip(&self.unavailable)
-            .any(|(f, unavailable)| *unavailable && f.piece_range.contains(&piece.get()))
+            .any(|(url, unavailable)| url.is_some() && !unavailable)
     }
 
     async fn run(&mut self) -> anyhow::Result<()> {
@@ -252,13 +276,14 @@ impl<'a> Worker<'a> {
             self.state.web_seed_release(self.seed.handle())?;
 
             match result {
-                Ok(()) => self.transient_failures = 0,
+                Ok(()) => {
+                    self.transient_failures = 0;
+                    self.file_misses = 0;
+                }
                 Err(Failure::Lost) => {}
                 Err(Failure::Transient { error, retry_after }) => {
                     self.transient_failures = self.transient_failures.saturating_add(1);
-                    let delay = retry_after
-                        .map(|d| d.min(RETRY_AFTER_MAX))
-                        .unwrap_or_else(|| backoff(self.transient_failures));
+                    let delay = transient_delay(retry_after, self.transient_failures);
                     debug!(url = self.seed.url(), ?delay, "web seed failed: {error}");
                     self.seed.set_error(WebSeedState::BackingOff, error);
                     tokio::time::sleep(delay).await;
@@ -268,22 +293,19 @@ impl<'a> Worker<'a> {
                         url = self.seed.url(),
                         file, "web seed lacks a file: {error}"
                     );
-                    if let Some(u) = self.unavailable.get_mut(file) {
-                        *u = true;
-                    }
-                    let any_left = self
-                        .urls
-                        .iter()
-                        .zip(&self.unavailable)
-                        .any(|(url, unavailable)| url.is_some() && !unavailable);
-                    if !any_left {
+                    if !self.mark_unavailable(file) {
                         self.seed.set_error(
                             WebSeedState::Disabled,
                             format!("{error}; the web seed has none of the files"),
                         );
                         return Ok(());
                     }
-                    self.seed.set_error(WebSeedState::Downloading, error);
+                    // Like libtorrent, wait before asking again, so that a wrong base URL
+                    // does not turn into a request for every file at once.
+                    self.file_misses = self.file_misses.saturating_add(1);
+                    let delay = backoff(self.file_misses);
+                    self.seed.set_error(WebSeedState::BackingOff, error);
+                    tokio::time::sleep(delay).await;
                 }
                 Err(Failure::Unusable(error)) => {
                     warn!(url = self.seed.url(), "disabling web seed: {error}");
@@ -445,23 +467,27 @@ fn with_url(failure: Failure, url: &str) -> Failure {
 }
 
 /// The URL of every file of the torrent on the web seed `base`; `None` for padding and empty
-/// files. The paths are the ones the torrent publishes, whatever the files are called on disk.
+/// files. The paths are the ones the torrent publishes, whatever the files are called on disk;
+/// like libtorrent, `name.utf-8` and `path.utf-8` win over `name` and `path` when present.
 fn file_urls(
     base: &str,
     info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
     file_infos: &[FileInfo],
 ) -> Vec<Option<String>> {
-    let name = info
-        .info()
-        .name
+    let meta = info.info();
+    let name = meta
+        .name_utf8
         .as_ref()
+        .or(meta.name.as_ref())
         .map(|n| n.as_ref())
         .unwrap_or_default();
     // A single-file torrent maps its URL differently (BEP 19).
-    let single = info.info().length.is_some();
+    let single = meta.length.is_some();
+    let v1_files = meta.files.as_deref().unwrap_or_default();
     info.iter_file_details()
         .zip(file_infos)
-        .map(|(details, file)| {
+        .enumerate()
+        .map(|(index, (details, file))| {
             if file.attrs.padding || file.len == 0 {
                 None
             } else if single {
@@ -469,6 +495,12 @@ fn file_urls(
                     base,
                     name,
                     None::<std::iter::Empty<&[u8]>>,
+                ))
+            } else if let Some(path) = v1_files.get(index).and_then(|f| f.path_utf8.as_ref()) {
+                Some(web_seed_file_url(
+                    base,
+                    name,
+                    Some(path.iter().map(|c| c.as_ref())),
                 ))
             } else {
                 Some(web_seed_file_url(
@@ -501,6 +533,16 @@ fn backoff(failures: u32) -> Duration {
         .checked_shl(failures.saturating_sub(1))
         .unwrap_or(u32::MAX);
     BACKOFF_FIRST.saturating_mul(factor).min(BACKOFF_MAX)
+}
+
+/// How long to wait after `failures` transient failures in a row, the last one with the
+/// server asking to wait `retry_after`: the server may ask for a longer wait (up to
+/// [`RETRY_AFTER_MAX`]), never for a shorter one.
+fn transient_delay(retry_after: Option<Duration>, failures: u32) -> Duration {
+    retry_after
+        .unwrap_or_default()
+        .min(RETRY_AFTER_MAX)
+        .max(backoff(failures))
 }
 
 /// The delay in a `Retry-After` header. Only the delay-seconds form is understood; for an
@@ -685,7 +727,13 @@ impl Feeder<'_> {
         let piece: Piece<ByteBuf<'_>> = piece;
         match self
             .state
-            .process_received_chunk(self.seed.handle(), self.counters, &piece, chunk)
+            .process_received_chunk(
+                self.seed.handle(),
+                self.counters,
+                &piece,
+                chunk,
+                u64::from(received),
+            )
             .await
         {
             Ok(()) => {
@@ -693,7 +741,21 @@ impl Feeder<'_> {
                 Ok(())
             }
             Err(e) if e.downcast_ref::<PieceHashFailed>().is_some() => {
-                Err(Failure::HashFailed(chunk.piece_index))
+                // Chunks are written in order from the start of the piece, so the web seed
+                // supplied all of it only when its last chunk completed it. Otherwise chunks
+                // a peer wrote before the piece was stolen were part of it, and the failure
+                // may be theirs: the piece is back in the queue and the web seed moves on.
+                let piece_len = self.state.lengths().piece_length(chunk.piece_index);
+                if chunk.offset + chunk.size >= piece_len {
+                    Err(Failure::HashFailed(chunk.piece_index))
+                } else {
+                    debug!(
+                        url = self.seed.url(),
+                        piece = %chunk.piece_index,
+                        "a piece completed with chunks from someone else failed the hash check"
+                    );
+                    Err(Failure::Lost)
+                }
             }
             Err(e) => Err(Failure::Local(e)),
         }
@@ -813,6 +875,91 @@ mod tests {
         assert_eq!(backoff(3), BACKOFF_FIRST * 4);
         assert_eq!(backoff(20), BACKOFF_MAX);
         assert_eq!(backoff(u32::MAX), BACKOFF_MAX);
+    }
+
+    #[test]
+    fn test_transient_delay() {
+        // No wish: the back-off.
+        assert_eq!(transient_delay(None, 1), BACKOFF_FIRST);
+        assert_eq!(transient_delay(None, 3), BACKOFF_FIRST * 4);
+        // A shorter wish, zero included, does not shorten it.
+        assert_eq!(transient_delay(Some(Duration::ZERO), 1), BACKOFF_FIRST);
+        assert_eq!(
+            transient_delay(Some(Duration::from_secs(1)), 2),
+            BACKOFF_FIRST * 2
+        );
+        // A longer one is honoured, up to a bound.
+        assert_eq!(
+            transient_delay(Some(Duration::from_secs(60)), 1),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            transient_delay(Some(Duration::from_secs(u64::MAX)), 1),
+            RETRY_AFTER_MAX
+        );
+    }
+
+    /// `name.utf-8` and `path.utf-8` win over the legacy-encoded `name` and `path`, file by
+    /// file; padding and empty files get no URL.
+    #[test]
+    fn test_file_urls_prefer_utf8_names() {
+        fn bstr(s: &[u8]) -> Vec<u8> {
+            let mut v = format!("{}:", s.len()).into_bytes();
+            v.extend_from_slice(s);
+            v
+        }
+        // "你" in GBK and in UTF-8.
+        let gbk: &[u8] = b"\xc4\xe3";
+        let utf8 = "你".as_bytes();
+        let mut t = b"d4:infod5:filesl".to_vec();
+        t.extend(b"d6:lengthi10e4:pathl");
+        t.extend(bstr(gbk));
+        t.extend(b"e10:path.utf-8l");
+        t.extend(bstr(utf8));
+        t.extend(b"ee");
+        t.extend(b"d6:lengthi10e4:pathl3:");
+        t.extend(gbk);
+        t.extend(b"2ee");
+        t.extend(b"d6:lengthi0e4:pathl1:eee");
+        t.extend(b"e4:name");
+        t.extend(bstr(gbk));
+        t.extend(b"10:name.utf-8");
+        t.extend(bstr(utf8));
+        t.extend(b"12:piece lengthi16384e6:pieces20:");
+        t.extend([0u8; 20]);
+        t.extend(b"ee");
+        use clone_to_owned::CloneToOwned;
+        let info = librqbit_core::torrent_metainfo::torrent_from_bytes(&t)
+            .unwrap()
+            .info
+            .data
+            .clone_to_owned(None)
+            .validate()
+            .unwrap();
+        assert_eq!(
+            info.info().name_utf8.as_ref().map(|n| n.as_ref()),
+            Some(utf8)
+        );
+        let file = |offset, len| FileInfo {
+            relative_filename: "x".into(),
+            offset_in_torrent: offset,
+            piece_range: 0..1,
+            attrs: Default::default(),
+            len,
+        };
+        let urls = file_urls(
+            "http://h/d/",
+            &info,
+            &[file(0, 10), file(10, 10), file(20, 0)],
+        );
+        assert_eq!(
+            urls,
+            vec![
+                Some("http://h/d/%E4%BD%A0/%E4%BD%A0".to_owned()),
+                Some("http://h/d/%E4%BD%A0/%C4%E32".to_owned()),
+                None,
+            ]
+        );
     }
 
     #[test]
