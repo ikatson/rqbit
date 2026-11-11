@@ -34,6 +34,9 @@ pub struct SerializedTorrent {
     // removed. Missing in older state: the torrent's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     web_seeds: Option<Vec<String>>,
+    // Web seeds are disabled for this torrent (AddTorrentOptions::disable_web_seeds).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    disable_web_seeds: bool,
 }
 
 impl SerializedTorrent {
@@ -64,6 +67,7 @@ impl SerializedTorrent {
             only_files: self.only_files,
             replace_web_seeds: self.web_seeds.is_some(),
             web_seeds: self.web_seeds,
+            disable_web_seeds: self.disable_web_seeds,
             overwrite: true,
             ..Default::default()
         };

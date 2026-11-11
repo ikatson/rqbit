@@ -1414,10 +1414,7 @@ impl Session {
                 session: Arc::downgrade(self),
                 magnet_name: name,
                 client_name_and_version: self.client_name_and_version.clone(),
-                web_seeds: WebSeeds::new(
-                    web_seeds,
-                    self.disable_web_seeds || opts.disable_web_seeds,
-                ),
+                web_seeds: WebSeeds::new(web_seeds, opts.disable_web_seeds, self.disable_web_seeds),
             });
 
             let initializing = Arc::new(TorrentStateInitializing::new(

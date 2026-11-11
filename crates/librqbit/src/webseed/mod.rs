@@ -171,6 +171,8 @@ pub(crate) struct WebSeeds {
     /// Web seeds are disabled for this torrent or its session: they are listed (and persisted)
     /// but never contacted.
     disabled: bool,
+    /// Web seeds are disabled for this torrent itself (persisted with it).
+    disabled_for_torrent: bool,
     list: RwLock<Vec<Arc<WebSeed>>>,
     /// Numbers the web seeds for their handles.
     next_id: AtomicU32,
@@ -180,14 +182,15 @@ pub(crate) struct WebSeeds {
 
 impl WebSeeds {
     /// `urls` must be usable web seed URLs (see [`push_web_seed`]).
-    pub(crate) fn new(urls: Vec<String>, disabled: bool) -> Self {
+    pub(crate) fn new(urls: Vec<String>, disabled_for_torrent: bool, disabled: bool) -> Self {
         let list: Vec<_> = urls
             .into_iter()
             .zip(0u32..)
             .map(|(url, id)| Arc::new(WebSeed::new(url, id)))
             .collect();
         Self {
-            disabled,
+            disabled: disabled || disabled_for_torrent,
+            disabled_for_torrent,
             next_id: AtomicU32::new(u32::try_from(list.len()).unwrap_or(u32::MAX)),
             list: RwLock::new(list),
             changed: Notify::new(),
@@ -196,6 +199,10 @@ impl WebSeeds {
 
     pub(crate) fn is_disabled(&self) -> bool {
         self.disabled
+    }
+
+    pub(crate) fn is_disabled_for_torrent(&self) -> bool {
+        self.disabled_for_torrent
     }
 
     pub(crate) fn urls(&self) -> Vec<String> {
@@ -286,6 +293,11 @@ impl ManagedTorrent {
     pub(crate) fn web_seed_urls(&self) -> Vec<String> {
         self.shared.web_seeds.urls()
     }
+
+    /// Web seeds are disabled for this torrent itself, as persisted.
+    pub(crate) fn web_seeds_disabled_for_torrent(&self) -> bool {
+        self.shared.web_seeds.is_disabled_for_torrent()
+    }
 }
 
 impl Session {
@@ -349,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_web_seeds_add_remove() {
-        let ws = WebSeeds::new(s(&["http://a/x"]), false);
+        let ws = WebSeeds::new(s(&["http://a/x"]), false, false);
         assert!(!ws.add("http://a/x").unwrap());
         assert!(ws.add(" http://b/x ").unwrap());
         assert!(ws.add("udp://c/x").is_err());
@@ -367,9 +379,12 @@ mod tests {
 
     #[test]
     fn test_disabled_web_seeds_report_disabled() {
-        let ws = WebSeeds::new(s(&["http://a/x"]), true);
+        let ws = WebSeeds::new(s(&["http://a/x"]), true, false);
         assert_eq!(ws.stats()[0].state, WebSeedState::Disabled);
-        let ws = WebSeeds::new(s(&["http://a/x"]), false);
+        let ws = WebSeeds::new(s(&["http://a/x"]), false, true);
+        assert_eq!(ws.stats()[0].state, WebSeedState::Disabled);
+        assert!(!ws.is_disabled_for_torrent());
+        let ws = WebSeeds::new(s(&["http://a/x"]), false, false);
         assert_eq!(ws.stats()[0].state, WebSeedState::Idle);
     }
 }
