@@ -347,6 +347,43 @@ impl Api {
         Ok(Default::default())
     }
 
+    /// The web seeds (BEP 19) of the torrent and what each of them is doing.
+    pub fn api_torrent_web_seeds(&self, idx: TorrentIdOrHash) -> Result<TorrentWebSeedsResponse> {
+        let handle = self.mgr_handle(idx)?;
+        Ok(TorrentWebSeedsResponse {
+            web_seeds: handle.web_seeds(),
+        })
+    }
+
+    /// Adds a web seed (an `http` or `https` URL) to the torrent.
+    pub async fn api_torrent_action_add_web_seed(
+        &self,
+        idx: TorrentIdOrHash,
+        url: &str,
+    ) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        self.session
+            .add_web_seed(&handle, url)
+            .await
+            .context("error adding the web seed")
+            .with_status(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
+    }
+
+    /// Removes a web seed from the torrent.
+    pub async fn api_torrent_action_remove_web_seed(
+        &self,
+        idx: TorrentIdOrHash,
+        url: &str,
+    ) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        self.session
+            .remove_web_seed(&handle, url)
+            .await
+            .context("error removing the web seed")
+            .with_status(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
+    }
     pub fn api_set_rust_log(&self, new_value: String) -> Result<EmptyJsonResponse> {
         let tx = self
             .rust_log_reload_tx
@@ -529,6 +566,11 @@ pub struct TorrentDetailsResponseFile {
     pub length: u64,
     pub included: bool,
     pub attributes: FileDetailsAttrs,
+}
+
+#[derive(Serialize)]
+pub struct TorrentWebSeedsResponse {
+    pub web_seeds: Vec<crate::WebSeedStats>,
 }
 
 #[derive(Default, Serialize)]

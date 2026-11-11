@@ -253,6 +253,41 @@ pub async fn h_torrent_action_update_only_files(
         .map(axum::Json)
 }
 
+pub async fn h_torrent_web_seeds(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    state.api.api_torrent_web_seeds(idx).map(axum::Json)
+}
+
+#[derive(Deserialize)]
+pub struct WebSeedRequest {
+    url: String,
+}
+
+pub async fn h_torrent_action_add_web_seed(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<WebSeedRequest>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_add_web_seed(idx, &req.url)
+        .await
+        .map(axum::Json)
+}
+
+pub async fn h_torrent_action_remove_web_seed(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<WebSeedRequest>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_remove_web_seed(idx, &req.url)
+        .await
+        .map(axum::Json)
+}
 pub async fn h_session_stats(State(state): State<ApiState>) -> impl IntoResponse {
     axum::Json(state.api.api_session_stats())
 }
