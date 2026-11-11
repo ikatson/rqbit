@@ -432,8 +432,9 @@ mod tests {
         let src = dir.path().join("a");
         let dst = dir.path().join("b");
         // Bigger than one copy buffer, so the loop runs more than once.
-        let content = (0..super::COPY_BUFFER_LEN * 2 + 17)
-            .map(|i| (i % 251) as u8)
+        let content = (0..=250u8)
+            .cycle()
+            .take(super::COPY_BUFFER_LEN * 2 + 17)
             .collect::<Vec<_>>();
         write(&src, &content);
         copy_then_remove(&src, &dst, &CancellationToken::new()).unwrap();

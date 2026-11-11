@@ -68,6 +68,13 @@ pub use self::streaming::FileStream;
 //
 // - initializing -> error
 // - live -> error
+//
+// - paused, live, error -> initializing (`Session::force_recheck`, and a storage operation
+//   that interrupted a check starts it again)
+//
+// The paused state is held inline, larger than the others: there is one per torrent and
+// it's swapped rarely, so boxing it would only add an allocation per pause.
+#[allow(clippy::large_enum_variant)]
 pub enum ManagedTorrentState {
     Initializing(Arc<TorrentStateInitializing>),
     Paused(TorrentStatePaused),
