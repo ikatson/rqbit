@@ -159,6 +159,23 @@ impl<BufType: AsRef<[u8]> + Clone> TorrentMetaV1<BufType> {
         }
         Ok(validated)
     }
+
+    /// Like [`Self::validate_with_piece_layers`], but a v2 file whose layer
+    /// is missing from `piece layers` (or a missing dictionary) is no error:
+    /// its pieces cannot be verified until the layer is learned from peers
+    /// (see [`ValidatedTorrentMetaV1Info::can_verify_piece`]). The entries
+    /// that are there are still checked against their pieces root.
+    pub fn validate_with_known_piece_layers(
+        &self,
+    ) -> crate::Result<ValidatedTorrentMetaV1Info<BufType>> {
+        let validated = self.info.data.clone().validate()?;
+        if validated.version().has_v2()
+            && let Some(layers) = self.piece_layers.as_ref()
+        {
+            validated.load_piece_layers(layers)?;
+        }
+        Ok(validated)
+    }
 }
 
 /// Main torrent information, shared by .torrent files and magnet link contents.

@@ -520,6 +520,55 @@ fn test_reject_missing_layer() {
 }
 
 #[test]
+fn test_known_piece_layers_allows_missing_ones() {
+    for hybrid in [false, true] {
+        let full = build_torrent(FILES, 16384, hybrid);
+        let full_bytes = full.to_bytes();
+        let full_torrent: TorrentMetaV1<ByteBuf> = torrent_from_bytes(&full_bytes).unwrap();
+        let expected = full_torrent.validate_with_piece_layers().unwrap();
+
+        let mut t = full.clone();
+        t.remove("piece layers");
+        let bytes = t.to_bytes();
+        let torrent: TorrentMetaV1<ByteBuf> = torrent_from_bytes(&bytes).unwrap();
+        let info = torrent.validate_with_known_piece_layers().unwrap();
+        let missing: Vec<usize> = info.missing_piece_layers().collect();
+        assert_eq!(
+            missing,
+            expected
+                .v2_files()
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.has_piece_layer(16384))
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        );
+        let big = info.v2_files()[missing[0]];
+        let piece = info
+            .lengths()
+            .validate_piece_index(big.first_piece)
+            .unwrap();
+        assert!(!info.can_verify_piece(piece));
+        assert!(info.piece_verifier(piece).is_none());
+
+        // Learning the layer makes its pieces verifiable.
+        let layer = expected.piece_layer(missing[0]).unwrap().to_vec();
+        assert!(info.set_piece_layer(missing[0], &layer).unwrap());
+        assert!(info.can_verify_piece(piece));
+
+        // A bad entry is still an error.
+        let mut t = full.clone();
+        layer_of(&mut t, "big.bin")[40] ^= 1;
+        let bytes = t.to_bytes();
+        let torrent: TorrentMetaV1<ByteBuf> = torrent_from_bytes(&bytes).unwrap();
+        assert!(matches!(
+            torrent.validate_with_known_piece_layers(),
+            Err(Error::V2PieceLayersRootMismatch)
+        ));
+    }
+}
+
+#[test]
 fn test_reject_bad_piece_length() {
     for (pl, hybrid) in [
         (8192, false),
