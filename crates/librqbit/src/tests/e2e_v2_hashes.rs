@@ -66,12 +66,10 @@ fn parse_request(p: &[u8]) -> (Id32, HashRequestShape) {
 fn parse_hashes(p: &[u8]) -> (Id32, HashRequestShape, Vec<Id32>) {
     let (root, shape) = parse_request(p);
     let hashes = p[48..]
-        .chunks_exact(32)
-        .map(|c| {
-            let mut h = Id32::default();
-            h.0.copy_from_slice(c);
-            h
-        })
+        .as_chunks::<32>()
+        .0
+        .iter()
+        .map(|c| Id32::new(*c))
         .collect();
     (root, shape, hashes)
 }
@@ -297,9 +295,9 @@ async fn test_v2_hash_request_flood_is_bounded() -> anyhow::Result<()> {
             .count();
         assert!(closed, "the flooding peer was not disconnected");
         // The budget refills while the flood is read.
-        let refill = (elapsed.as_secs_f64() * f64::from(ANSWERS_PER_SECOND)).ceil() as usize;
+        let refill = u128::from(ANSWERS_PER_SECOND) * elapsed.as_millis() / 1000 + 1;
         assert!(
-            answered <= ANSWER_BURST as usize + refill,
+            answered as u128 <= u128::from(ANSWER_BURST) + refill,
             "{answered} answers in {elapsed:?}"
         );
         assert!(answered >= 1, "nothing was answered");
