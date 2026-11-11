@@ -1862,7 +1862,7 @@ async fn test_create_and_serve_folder_does_not_hash_again() -> anyhow::Result<()
                 .create_and_serve_torrent(
                     &folder,
                     CreateTorrentOptions {
-                        piece_length: Some(PIECE_LEN as u32),
+                        piece_length: Some(u32::try_from(PIECE_LEN)?),
                         version,
                         ..Default::default()
                     },
@@ -1916,7 +1916,7 @@ async fn test_create_and_serve_renamed_single_file() -> anyhow::Result<()> {
                 &file,
                 CreateTorrentOptions {
                     name: Some("in-torrent.bin"),
-                    piece_length: Some(PIECE_LEN as u32),
+                    piece_length: Some(u32::try_from(PIECE_LEN)?),
                     ..Default::default()
                 },
             )
