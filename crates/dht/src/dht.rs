@@ -1,10 +1,10 @@
 use std::{
     cmp::Reverse,
-    net::{Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     str::FromStr,
     sync::{
         Arc,
-        atomic::{AtomicU16, Ordering},
+        atomic::{AtomicBool, AtomicU16, Ordering},
     },
     task::Poll,
     time::{Duration, Instant},
@@ -12,6 +12,7 @@ use std::{
 
 use crate::{
     Error, INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
+    bep42::{self, ExternalIpVoter},
     bprotocol::{
         self, AnnouncePeer, CompactNodeInfo, CompactNodeInfoOwned, ErrorDescription,
         FindNodeRequest, GetPeersRequest, Message, MessageKind, Node, PingRequest, Response, Want,
@@ -35,7 +36,7 @@ use librqbit_core::{
     spawn_utils::{spawn, spawn_with_cancel},
 };
 use librqbit_dualstack_sockets::{BindDevice, UdpSocket};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use serde::Serialize;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel};
@@ -49,11 +50,33 @@ fn now() -> Instant {
 
 #[derive(Debug, Serialize)]
 pub struct DhtStats {
+    /// Our node id in the IPv4 DHT.
     #[serde(serialize_with = "crate::utils::serialize_id20")]
     pub id: Id20,
+    /// Our node id in the IPv6 DHT. It follows our external IPv6 address once one is adopted.
+    #[serde(serialize_with = "crate::utils::serialize_id20")]
+    pub id_v6: Id20,
     pub outstanding_requests: usize,
     pub routing_table_size: usize,
     pub routing_table_size_v6: usize,
+    /// Our external IPv4 address, as the DHT nodes we talk to agree on (BEP 42).
+    pub external_ip_v4: Option<Ipv4Addr>,
+    /// Our external IPv6 address, as the DHT nodes we talk to agree on (BEP 42).
+    pub external_ip_v6: Option<Ipv6Addr>,
+}
+
+/// Our node ids. BEP 42 ties a node id to the external address of the node, and we have one
+/// external address per address family, so the IPv4 and the IPv6 DHT each get their own id.
+#[derive(Debug, Clone, Copy)]
+struct NodeIds {
+    v4: Id20,
+    v6: Id20,
+}
+
+impl NodeIds {
+    fn get(&self, is_v4: bool) -> Id20 {
+        if is_v4 { self.v4 } else { self.v6 }
+    }
 }
 
 struct OutstandingRequest {
@@ -133,6 +156,12 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
             Some(token) => token,
             None => return,
         };
+        // BEP 42: with enforcement on, the token of a node whose id does not match its address
+        // does not count, so it never becomes a storage target.
+        if !req.dht.node_id_acceptable(&resp.id, addr) {
+            trace!(?addr, id = ?resp.id, "not announcing to a node with a non-BEP 42 id");
+            return;
+        }
         if req.info_hash.distance(&target_node) > self.min_distance_to_announce {
             trace!(
                 "not announcing, {:?} is too far from {:?}",
@@ -160,6 +189,11 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
 struct RecursiveRequestCallbacksFindNodes {}
 impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
     fn on_request_start(&self, req: &RecursiveRequest<Self>, target_node: Id20, addr: SocketAddr) {
+        // The node can still help this lookup, but it does not go into the routing table.
+        if !req.dht.node_id_acceptable(&target_node, addr) {
+            trace!(?addr, id = ?target_node, "not adding a node with a non-BEP 42 id");
+            return;
+        }
         let mut rt = req.dht.get_table_for_addr(addr).write();
         match rt.add_node(target_node, addr) {
             InsertResult::WasExisting | InsertResult::ReplacedBad(_) | InsertResult::Added => {
@@ -571,7 +605,9 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 }
 
 pub struct DhtState {
-    id: Id20,
+    // Lock order: a routing table, then `ids`. `ids` is only ever held to copy an id out or to
+    // swap the ids, never across another lock.
+    ids: RwLock<NodeIds>,
     next_transaction_id: AtomicU16,
 
     // Created requests: (transaction_id, addr) => Requests.
@@ -581,6 +617,11 @@ pub struct DhtState {
     routing_table_v4: RwLock<RoutingTable>,
     routing_table_v6: RwLock<RoutingTable>,
     listen_addr: SocketAddr,
+
+    // BEP 42: our external address of each family, from the "ip" field of responses.
+    ip_voter_v4: Mutex<ExternalIpVoter>,
+    ip_voter_v6: Mutex<ExternalIpVoter>,
+    enforce_node_id: AtomicBool,
 
     // Sending requests to the worker.
     rate_limiter: RateLimiter,
@@ -593,6 +634,7 @@ pub struct DhtState {
 }
 
 impl DhtState {
+    #[allow(clippy::too_many_arguments)]
     fn new_internal(
         id: Id20,
         sender: UnboundedSender<WorkerSendRequest>,
@@ -600,22 +642,154 @@ impl DhtState {
         routing_table_v6: Option<RoutingTable>,
         listen_addr: SocketAddr,
         peer_store: PeerStore,
+        enforce_node_id: bool,
         cancellation_token: CancellationToken,
     ) -> Self {
+        // A restored table brings the id it was built around; with BEP 42 the ids of the two
+        // address families differ.
         let routing_table_v4 = routing_table_v4.unwrap_or_else(|| RoutingTable::new(id, None));
         let routing_table_v6 = routing_table_v6.unwrap_or_else(|| RoutingTable::new(id, None));
+        let ids = NodeIds {
+            v4: routing_table_v4.id(),
+            v6: routing_table_v6.id(),
+        };
+        peer_store.set_self_id(true, ids.v4);
+        peer_store.set_self_id(false, ids.v6);
         Self {
-            id,
+            ids: RwLock::new(ids),
             next_transaction_id: AtomicU16::new(0),
             inflight_by_transaction_id: Default::default(),
             routing_table_v4: RwLock::new(routing_table_v4),
             routing_table_v6: RwLock::new(routing_table_v6),
             worker_sender: sender,
             listen_addr,
+            ip_voter_v4: Mutex::new(ExternalIpVoter::new()),
+            ip_voter_v6: Mutex::new(ExternalIpVoter::new()),
+            enforce_node_id: AtomicBool::new(enforce_node_id),
             rate_limiter: make_rate_limiter(),
             peer_store,
             cancellation_token,
         }
+    }
+
+    /// Our node id towards nodes of the address family of `addr`.
+    fn id_for(&self, addr: SocketAddr) -> Id20 {
+        self.ids.read().get(addr.is_ipv4())
+    }
+
+    fn table(&self, is_v4: bool) -> &RwLock<RoutingTable> {
+        if is_v4 {
+            &self.routing_table_v4
+        } else {
+            &self.routing_table_v6
+        }
+    }
+
+    /// Whether a node with `id` at `addr` may go into the routing table, be handed out to others
+    /// and be a storage target: always, unless BEP 42 enforcement is on and the id does not
+    /// match the address.
+    fn node_id_acceptable(&self, id: &Id20, addr: SocketAddr) -> bool {
+        !self.enforce_node_id.load(Ordering::Relaxed) || bep42::is_valid_node_id(id, addr.ip())
+    }
+
+    /// Switches BEP 42 enforcement (see [`DhtConfig::enforce_node_id`]) on or off at runtime.
+    /// Nodes already in the routing table stay, but are no longer handed out while it is on.
+    pub fn set_enforce_node_id(&self, enforce: bool) {
+        self.enforce_node_id.store(enforce, Ordering::Relaxed);
+    }
+
+    /// Counts the "ip" field of a response from `voter` towards our external address, and moves
+    /// our node id when the vote adopts a new address.
+    pub(crate) fn on_external_ip_reported(
+        self: &Arc<Self>,
+        voter: SocketAddr,
+        reported: SocketAddr,
+    ) {
+        let voter_ip = voter.ip().to_canonical();
+        let is_v4 = voter_ip.is_ipv4();
+        let voter_lock = if is_v4 {
+            &self.ip_voter_v4
+        } else {
+            &self.ip_voter_v6
+        };
+        let adopted = voter_lock.lock().vote(voter_ip, reported.ip(), now());
+        if let Some(ip) = adopted {
+            self.on_external_ip_adopted(ip);
+        }
+    }
+
+    /// Makes voters in four distinct networks of the family of `ip` report `ip` as our address,
+    /// which is enough for the vote to adopt it.
+    #[cfg(test)]
+    pub(crate) fn vote_external_ip(self: &Arc<Self>, ip: IpAddr) {
+        for n in 1..=4u8 {
+            let voter = match ip {
+                IpAddr::V4(_) => SocketAddr::from(([n, 1, 1, 1], 6881)),
+                IpAddr::V6(_) => SocketAddr::from((
+                    Ipv6Addr::new(0x2001, 0x0db8, u16::from(n), 0, 0, 0, 0, 1),
+                    6881,
+                )),
+            };
+            self.on_external_ip_reported(voter, SocketAddr::new(ip, 4321));
+        }
+    }
+
+    fn on_external_ip_adopted(self: &Arc<Self>, ip: IpAddr) {
+        let is_v4 = ip.is_ipv4();
+        let current = self.ids.read().get(is_v4);
+        // An id that matches already (e.g. one restored from disk) is kept, so that restarts
+        // do not move us around the DHT.
+        if bep42::node_id_matches_ip(&current, ip) {
+            info!(%ip, id = ?current, "adopted external address, node id already matches it");
+            return;
+        }
+        let id = bep42::generate_node_id(ip);
+        info!(%ip, old_id = ?current, new_id = ?id, "adopted external address, new node id");
+        self.set_node_id(is_v4, id);
+        self.refresh_around(is_v4, id);
+    }
+
+    /// Moves us to `id` in the DHT of one address family: the routing table is rebuilt around
+    /// the new id with the nodes we know, and everything that uses our id follows.
+    fn set_node_id(&self, is_v4: bool, id: Id20) {
+        let mut table = self.table(is_v4).write();
+        *table = table.with_new_id(id);
+        let mut ids = self.ids.write();
+        if is_v4 {
+            ids.v4 = id;
+        } else {
+            ids.v6 = id;
+        }
+        self.peer_store.set_self_id(is_v4, id);
+    }
+
+    /// Looks up the nodes around `id`, so that the buckets near our new id fill up.
+    fn refresh_around(self: &Arc<Self>, is_v4: bool, id: Id20) {
+        let addrs = self
+            .table(is_v4)
+            .read()
+            .sorted_by_distance_from(id, now())
+            .iter()
+            .map(|n| n.addr())
+            .take(8)
+            .collect::<Vec<_>>();
+        if addrs.is_empty() {
+            return;
+        }
+        let dht = self.clone();
+        spawn_with_cancel(
+            debug_span!(parent: None, "dht_refresh_new_id", is_v4),
+            "dht_refresh_new_id",
+            self.cancellation_token.clone(),
+            async move {
+                if let Err(e) =
+                    RecursiveRequest::find_node_for_routing_table(dht, id, addrs.into_iter()).await
+                {
+                    debug!("lookup around the new node id failed: {e:#}");
+                }
+                Ok::<_, Error>(())
+            },
+        );
     }
 
     async fn request(&self, request: Request, addr: SocketAddr) -> crate::Result<ResponseOrError> {
@@ -662,6 +836,7 @@ impl DhtState {
         } else {
             Some(Want::V4)
         };
+        let id = self.id_for(addr);
 
         let message = match request {
             Request::GetPeers(info_hash) => Message {
@@ -669,7 +844,7 @@ impl DhtState {
                 version: None,
                 ip: None,
                 kind: MessageKind::GetPeersRequest(GetPeersRequest {
-                    id: self.id,
+                    id,
                     info_hash,
                     want,
                 }),
@@ -678,17 +853,13 @@ impl DhtState {
                 transaction_id: ByteBufOwned::from(transaction_id_buf.as_ref()),
                 version: None,
                 ip: None,
-                kind: MessageKind::FindNodeRequest(FindNodeRequest {
-                    id: self.id,
-                    target,
-                    want,
-                }),
+                kind: MessageKind::FindNodeRequest(FindNodeRequest { id, target, want }),
             },
             Request::Ping => Message {
                 transaction_id: ByteBufOwned::from(transaction_id_buf.as_ref()),
                 version: None,
                 ip: None,
-                kind: MessageKind::PingRequest(PingRequest { id: self.id }),
+                kind: MessageKind::PingRequest(PingRequest { id }),
             },
             Request::Announce {
                 info_hash,
@@ -696,7 +867,7 @@ impl DhtState {
                 port,
             } => Message {
                 kind: MessageKind::AnnouncePeer(AnnouncePeer {
-                    id: self.id,
+                    id,
                     implied_port: 0,
                     info_hash,
                     port,
@@ -754,9 +925,11 @@ impl DhtState {
         A: CompactSerialize + CompactSerializeFixedLen + FromSocketAddr,
         Node<A>: CompactSerialize + CompactSerializeFixedLen,
     {
+        let enforce = self.enforce_node_id.load(Ordering::Relaxed);
         let it = table
             .sorted_by_distance_from(target, now)
             .into_iter()
+            .filter(|r| !enforce || bep42::is_valid_node_id(&r.id(), r.addr().ip()))
             .filter_map(|r| {
                 Some(Node {
                     id: r.id(),
@@ -791,6 +964,13 @@ impl DhtState {
                     }
                 };
 
+                // BEP 42: whoever answers our queries tells us how they see our address.
+                // Errors count as well: a node that enforces BEP 42 answers a node with an id
+                // that does not match its address with an error.
+                if let Some(reported) = msg.ip {
+                    self.on_external_ip_reported(addr, reported);
+                }
+
                 let response_or_error = match msg.kind {
                     MessageKind::Error(e) => ResponseOrError::Error(e),
                     MessageKind::Response(r) => ResponseOrError::Response(r),
@@ -820,7 +1000,7 @@ impl DhtState {
                     version: None,
                     ip: Some(addr),
                     kind: MessageKind::Response(bprotocol::Response {
-                        id: self.id,
+                        id: self.id_for(addr),
                         ..Default::default()
                     }),
                 };
@@ -848,7 +1028,7 @@ impl DhtState {
                     version: None,
                     ip: Some(addr),
                     kind: MessageKind::Response(bprotocol::Response {
-                        id: self.id,
+                        id: self.id_for(addr),
                         ..Default::default()
                     }),
                 };
@@ -876,7 +1056,7 @@ impl DhtState {
                     version: None,
                     ip: Some(addr),
                     kind: MessageKind::Response(bprotocol::Response {
-                        id: self.id,
+                        id: self.id_for(addr),
                         nodes,
                         nodes6,
                         values: Some(compact_peer_info),
@@ -908,7 +1088,7 @@ impl DhtState {
                     version: None,
                     ip: Some(addr),
                     kind: MessageKind::Response(bprotocol::Response {
-                        id: self.id,
+                        id: self.id_for(addr),
                         nodes,
                         nodes6,
                         ..Default::default()
@@ -929,11 +1109,15 @@ impl DhtState {
     }
 
     pub fn get_stats(&self) -> DhtStats {
+        let ids = *self.ids.read();
         DhtStats {
-            id: self.id,
+            id: ids.v4,
+            id_v6: ids.v6,
             outstanding_requests: self.inflight_by_transaction_id.len(),
             routing_table_size: self.routing_table_v4.read().len(),
             routing_table_size_v6: self.routing_table_v6.read().len(),
+            external_ip_v4: bep42::adopted_v4(&self.ip_voter_v4.lock()),
+            external_ip_v6: bep42::adopted_v6(&self.ip_voter_v6.lock()),
         }
     }
 }
@@ -999,16 +1183,17 @@ impl DhtWorker {
             .await
             .map_err(|err| Error::lookup(hostname, err))?
             .collect::<Vec<_>>();
+        let ids = *self.dht.ids.read();
         let v4 = RecursiveRequest::find_node_for_routing_table(
             self.dht.clone(),
-            self.dht.id,
+            ids.v4,
             addrs.iter().copied().filter(|a| a.is_ipv4()),
         )
         .instrument(debug_span!("v4"));
 
         let v6 = RecursiveRequest::find_node_for_routing_table(
             self.dht.clone(),
-            self.dht.id,
+            ids.v6,
             addrs.iter().copied().filter(|a| a.is_ipv6()),
         )
         .instrument(debug_span!("v6"));
@@ -1306,6 +1491,10 @@ pub struct DhtConfig<'a> {
     pub peer_store: Option<PeerStore>,
     pub cancellation_token: Option<CancellationToken>,
     pub bind_device: Option<&'a BindDevice>,
+    /// BEP 42 enforcement: nodes whose id does not match their address are kept out of the
+    /// routing table, are not handed out in `nodes` and never get our announces or puts. Their
+    /// answers still help the lookup in progress. Off by default, like in libtorrent.
+    pub enforce_node_id: bool,
 }
 
 impl DhtState {
@@ -1353,6 +1542,7 @@ impl DhtState {
                 config.routing_table_v6,
                 listen_addr,
                 config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
+                config.enforce_node_id,
                 token,
             ));
 
@@ -1423,16 +1613,18 @@ impl FromSocketAddr for SocketAddrV6 {
 #[cfg(test)]
 mod tests {
     use std::{
-        net::{Ipv4Addr, SocketAddr},
+        collections::HashSet,
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         time::Duration,
     };
 
     use bencode::ByteBufOwned;
+    use librqbit_core::hash_id::Id20;
     use tokio::net::UdpSocket;
 
     use super::{DhtConfig, DhtState};
     use crate::{
-        Dht,
+        Dht, bep42,
         bprotocol::{self, MessageKind},
     };
 
@@ -1497,5 +1689,156 @@ mod tests {
         // Some platforms refuse to send a datagram this large, which is fine.
         let _ = silent.send_to(&[0u8; 20_000], dht.listen_addr()).await;
         assert_answers_ping(&dht).await;
+    }
+
+    #[tokio::test]
+    async fn test_external_ip_vote_moves_node_id() {
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let dht = start_dht(silent.local_addr().unwrap()).await;
+        let before = dht.get_stats();
+        assert_eq!(before.external_ip_v4, None);
+        assert_eq!(before.external_ip_v6, None);
+
+        // Few enough nodes to all fit in the table whatever our id is. They all point at the
+        // silent socket, so the lookup around the new id goes nowhere.
+        let known = (0..8u8)
+            .map(|i| Id20::new([i.wrapping_mul(31); 20]))
+            .collect::<HashSet<_>>();
+        for id in &known {
+            dht.routing_table_v4
+                .write()
+                .add_node(*id, silent.local_addr().unwrap());
+        }
+
+        let ours_v4 = IpAddr::from(Ipv4Addr::new(124, 31, 75, 21));
+        dht.vote_external_ip(ours_v4);
+        let after_v4 = dht.get_stats();
+        assert_eq!(
+            after_v4.external_ip_v4,
+            Some(Ipv4Addr::new(124, 31, 75, 21))
+        );
+        assert_ne!(after_v4.id, before.id);
+        assert!(bep42::node_id_matches_ip(&after_v4.id, ours_v4));
+        // The IPv6 side has not moved.
+        assert_eq!(after_v4.id_v6, before.id_v6);
+        assert_eq!(after_v4.external_ip_v6, None);
+
+        // The table is rebuilt around the new id with the nodes we knew, and the peer store
+        // measures distances from the new id.
+        {
+            let table = dht.routing_table_v4.read();
+            assert_eq!(table.id(), after_v4.id);
+            assert_eq!(table.iter().map(|n| n.id()).collect::<HashSet<_>>(), known);
+        }
+        assert_eq!(dht.peer_store.self_id(true), after_v4.id);
+        assert_eq!(dht.peer_store.self_id(false), before.id_v6);
+
+        let ours_v6 = IpAddr::from(Ipv6Addr::new(0x2001, 0x0db8, 0xaaaa, 0, 0, 0, 0, 1));
+        dht.vote_external_ip(ours_v6);
+        let after_v6 = dht.get_stats();
+        assert_eq!(
+            after_v6.external_ip_v6,
+            Some(Ipv6Addr::new(0x2001, 0x0db8, 0xaaaa, 0, 0, 0, 0, 1))
+        );
+        assert!(bep42::node_id_matches_ip(&after_v6.id_v6, ours_v6));
+        assert_eq!(after_v6.id, after_v4.id);
+        assert_eq!(dht.routing_table_v6.read().id(), after_v6.id_v6);
+        assert_eq!(dht.peer_store.self_id(false), after_v6.id_v6);
+    }
+
+    #[tokio::test]
+    async fn test_external_ip_vote_keeps_matching_id() {
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let ours = IpAddr::from(Ipv4Addr::new(21, 75, 31, 124));
+        let id = bep42::generate_node_id(ours);
+        let dht = DhtState::with_config(DhtConfig {
+            peer_id: Some(id),
+            listen_addr: Some((Ipv4Addr::LOCALHOST, 0).into()),
+            bootstrap_addrs: Some(vec![silent.local_addr().unwrap().to_string()]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        dht.vote_external_ip(ours);
+        let stats = dht.get_stats();
+        assert_eq!(stats.external_ip_v4, Some(Ipv4Addr::new(21, 75, 31, 124)));
+        assert_eq!(stats.id, id);
+    }
+
+    #[tokio::test]
+    async fn test_one_liar_does_not_move_node_id() {
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let dht = start_dht(silent.local_addr().unwrap()).await;
+        let before = dht.get_stats().id;
+        for _ in 0..20 {
+            dht.on_external_ip_reported(
+                SocketAddr::from(([5, 6, 7, 8], 6881)),
+                SocketAddr::from(([124, 31, 75, 21], 4321)),
+            );
+        }
+        let stats = dht.get_stats();
+        assert_eq!(stats.external_ip_v4, None);
+        assert_eq!(stats.id, before);
+    }
+
+    #[tokio::test]
+    async fn test_enforce_node_id_keeps_invalid_nodes_out() {
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let dht = DhtState::with_config(DhtConfig {
+            listen_addr: Some((Ipv4Addr::LOCALHOST, 0).into()),
+            bootstrap_addrs: Some(vec![silent.local_addr().unwrap().to_string()]),
+            enforce_node_id: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let valid_addr = SocketAddr::from(([124, 31, 75, 21], 6881));
+        let valid = bep42::generate_node_id(valid_addr.ip());
+        let invalid_addr = SocketAddr::from(([21, 75, 31, 124], 6881));
+        let mut invalid = valid;
+        invalid.0[0] ^= 0xff;
+        assert!(!bep42::is_valid_node_id(&invalid, invalid_addr.ip()));
+        // Local addresses are exempt, whatever the id.
+        let local_addr = SocketAddr::from(([192, 168, 1, 2], 6881));
+        let local = Id20::new([7; 20]);
+
+        let req = super::RecursiveRequest {
+            max_depth: 4,
+            info_hash: valid,
+            request: super::Request::FindNode(valid),
+            dht: dht.clone(),
+            useful_nodes_limit: 32,
+            useful_nodes: parking_lot::RwLock::new(Vec::new()),
+            peer_tx: tokio::sync::mpsc::unbounded_channel().0,
+            node_tx: tokio::sync::mpsc::unbounded_channel().0,
+            callbacks: super::RecursiveRequestCallbacksFindNodes {},
+        };
+        for (id, addr) in [
+            (valid, valid_addr),
+            (invalid, invalid_addr),
+            (local, local_addr),
+        ] {
+            super::RecursiveRequestCallbacks::on_request_start(&req.callbacks, &req, id, addr);
+        }
+        let in_table = |dht: &Dht| {
+            dht.routing_table_v4
+                .read()
+                .iter()
+                .map(|n| n.id())
+                .collect::<HashSet<_>>()
+        };
+        assert_eq!(in_table(&dht), HashSet::from([valid, local]));
+
+        // A node learned while enforcement was off is not handed out once it is on.
+        dht.routing_table_v4.write().add_node(invalid, invalid_addr);
+        let handed_out = |dht: &Dht| {
+            let (nodes, _) = dht.generate_compact_nodes_both(valid, super::Want::V4);
+            nodes.unwrap().iter().map(|n| n.id).collect::<HashSet<_>>()
+        };
+        assert_eq!(handed_out(&dht), HashSet::from([valid, local]));
+
+        dht.set_enforce_node_id(false);
+        assert_eq!(handed_out(&dht), HashSet::from([valid, invalid, local]));
     }
 }

@@ -518,6 +518,29 @@ impl RoutingTable {
         self.buckets.iter()
     }
 
+    /// A table built around a new id `id` (BEP 42 moved us) with the nodes of this one. What we
+    /// know about each node (when it last answered, errors) is kept. Good nodes and the nodes
+    /// closest to the new id go in first, so they win when buckets are full; nodes that do not
+    /// fit any more are dropped.
+    pub fn with_new_id(&self, id: Id20) -> Self {
+        let mut table = Self {
+            id,
+            size: 0,
+            buckets: BucketTree::new(self.buckets.max_size),
+        };
+        for node in self.sorted_by_distance_from(id, Instant::now()) {
+            match table.add_node(node.id, node.addr) {
+                InsertResult::Added | InsertResult::ReplacedBad(_) => {
+                    if let Some(inserted) = table.buckets.get_mut(&node.id, None) {
+                        *inserted = node.clone();
+                    }
+                }
+                InsertResult::WasExisting | InsertResult::Ignored => {}
+            }
+        }
+        table
+    }
+
     pub fn add_node(&mut self, id: Id20, addr: SocketAddr) -> InsertResult {
         let res = self.buckets.add_node(&self.id, id, addr);
         let replaced = match &res {

@@ -109,6 +109,31 @@ impl PersistentDht {
         cancellation_token: Option<CancellationToken>,
         bind_device: Option<&'a BindDevice>,
     ) -> BoxFuture<'a, anyhow::Result<Dht>> {
+        Self::create_with_config(
+            persistence_config,
+            port,
+            ipv4_only,
+            DhtConfig {
+                bootstrap_addrs,
+                cancellation_token,
+                bind_device,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Like [`PersistentDht::create`], with the remaining DHT options taken from `config`.
+    ///
+    /// The node id, the routing tables and the peer store come from the persisted state when
+    /// there is one (they replace those of `config`), and the listen address is computed from
+    /// `port`, the persisted port and `ipv4_only` (see [`dht_listen_addr`]).
+    #[inline(never)]
+    pub fn create_with_config<'a>(
+        persistence_config: DhtPersistenceConfig,
+        port: Option<u16>,
+        ipv4_only: bool,
+        config: DhtConfig<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<Dht>> {
         async move {
             let config_filename = match persistence_config.config_filename {
                 Some(f) => f,
@@ -153,22 +178,28 @@ impl PersistentDht {
                     }
                 },
             };
-            let (stored_port, routing_table, peer_store) = de
-                .map(|de| (Some(de.addr.port()), Some(de.table), de.peer_store))
-                .unwrap_or((None, None, None));
+            let (stored_port, routing_table, routing_table_v6, peer_store) = de
+                .map(|de| {
+                    (
+                        Some(de.addr.port()),
+                        Some(de.table),
+                        de.table_v6,
+                        de.peer_store,
+                    )
+                })
+                .unwrap_or((None, None, None, None));
 
             let listen_addr = dht_listen_addr(port, stored_port, ipv4_only);
-            let peer_id = routing_table.as_ref().map(|r| r.id());
 
+            // The restored tables keep our node ids (one per address family, see BEP 42) across
+            // restarts.
             let dht_config = DhtConfig {
-                peer_id,
-                bootstrap_addrs,
-                routing_table,
+                peer_id: routing_table.as_ref().map(|r| r.id()).or(config.peer_id),
+                routing_table: routing_table.or(config.routing_table),
+                routing_table_v6: routing_table_v6.or(config.routing_table_v6),
                 listen_addr: Some(listen_addr),
-                peer_store,
-                cancellation_token,
-                bind_device,
-                ..Default::default()
+                peer_store: peer_store.or(config.peer_store),
+                ..config
             };
             let dht = DhtState::with_config(dht_config).await?;
             spawn_with_cancel::<anyhow::Error>(
@@ -267,5 +298,62 @@ mod tests {
         let addr = dht_listen_addr(Some(6881), Some(12345), true);
         assert_eq!(addr.ip(), IpAddr::from(Ipv4Addr::UNSPECIFIED));
         assert_eq!(addr.port(), 6881);
+    }
+
+    // BEP 42: an id that still matches our external address survives a restart, one that does
+    // not is replaced once the new address is adopted. Both address families have their own.
+    #[tokio::test]
+    async fn persisted_node_ids_follow_the_external_address() {
+        let silent = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let bootstrap = silent.local_addr().unwrap().to_string();
+        let dir = tempfile::TempDir::new().unwrap();
+        let filename = dir.path().join("dht.json");
+        let start = || {
+            PersistentDht::create_with_config(
+                DhtPersistenceConfig {
+                    dump_interval: Some(Duration::from_secs(3600)),
+                    config_filename: Some(filename.clone()),
+                },
+                // A fresh port each time: the previous instance may still hold its own.
+                Some(0),
+                true,
+                DhtConfig {
+                    bootstrap_addrs: Some(vec![bootstrap.clone()]),
+                    ..Default::default()
+                },
+            )
+        };
+        let ours_v4 = IpAddr::from(Ipv4Addr::new(124, 31, 75, 21));
+        let ours_v6 = IpAddr::from(Ipv6Addr::new(0x2001, 0x0db8, 0xaaaa, 0, 0, 0, 0, 1));
+
+        let first = start().await.unwrap();
+        first.vote_external_ip(ours_v4);
+        first.vote_external_ip(ours_v6);
+        let ids = first.get_stats();
+        assert_ne!(ids.id, ids.id_v6);
+        dump_dht(&first, &filename, &dir.path().join("dht.json.tmp")).unwrap();
+        first.cancellation_token().cancel();
+
+        let second = start().await.unwrap();
+        assert_eq!(second.get_stats().id, ids.id);
+        assert_eq!(second.get_stats().id_v6, ids.id_v6);
+        second.vote_external_ip(ours_v4);
+        second.vote_external_ip(ours_v6);
+        let stats = second.get_stats();
+        assert_eq!(stats.external_ip_v4, Some(Ipv4Addr::new(124, 31, 75, 21)));
+        assert_eq!(stats.id, ids.id);
+        assert_eq!(stats.id_v6, ids.id_v6);
+        second.cancellation_token().cancel();
+
+        let third = start().await.unwrap();
+        let moved = IpAddr::from(Ipv4Addr::new(21, 75, 31, 124));
+        third.vote_external_ip(moved);
+        let stats = third.get_stats();
+        assert_ne!(stats.id, ids.id);
+        assert!(crate::bep42::node_id_matches_ip(&stats.id, moved));
+        assert_eq!(stats.id_v6, ids.id_v6);
+        third.cancellation_token().cancel();
     }
 }

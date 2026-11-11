@@ -28,7 +28,10 @@ struct StoredPeer {
 }
 
 pub struct PeerStore {
-    self_id: Id20,
+    // Our node ids (IPv4, IPv6): an announce is stored only when the info hash is close to the id
+    // we use in the address family of the announcing node. They move when BEP 42 gives us a new
+    // id, see `set_self_id`.
+    self_ids: RwLock<(Id20, Id20)>,
     max_remembered_tokens: u32,
     max_remembered_peers: u32,
     max_distance: Id20,
@@ -60,7 +63,7 @@ impl Serialize for PeerStore {
         }
 
         let mut s = serializer.serialize_struct("PeerStore", 7)?;
-        s.serialize_field("self_id", &self.self_id.as_string())?;
+        s.serialize_field("self_id", &self.self_ids.read().0.as_string())?;
         s.serialize_field("max_remembered_tokens", &self.max_remembered_tokens)?;
         s.serialize_field("max_remembered_peers", &self.max_remembered_peers)?;
         s.serialize_field("max_distance", &self.max_distance.as_string())?;
@@ -90,7 +93,8 @@ impl<'de> Deserialize<'de> for PeerStore {
         }
 
         Tmp::deserialize(deserializer).map(|tmp| Self {
-            self_id: tmp.self_id,
+            // The ids are reset by the DHT on startup anyway, see `set_self_id`.
+            self_ids: RwLock::new((tmp.self_id, tmp.self_id)),
             max_remembered_tokens: tmp.max_remembered_tokens,
             max_remembered_peers: tmp.max_remembered_peers,
             max_distance: tmp.max_distance,
@@ -104,7 +108,7 @@ impl<'de> Deserialize<'de> for PeerStore {
 impl PeerStore {
     pub fn new(self_id: Id20) -> Self {
         Self {
-            self_id,
+            self_ids: RwLock::new((self_id, self_id)),
             max_remembered_tokens: 1000,
             max_remembered_peers: 1000,
             max_distance: Id20::from_str("00000fffffffffffffffffffffffffffffffffff").unwrap(),
@@ -129,18 +133,45 @@ impl PeerStore {
         token
     }
 
+    /// Sets our node id of one address family, which decides which info hashes are close enough
+    /// to us to store peers for.
+    pub(crate) fn set_self_id(&self, is_v4: bool, id: Id20) {
+        let mut ids = self.self_ids.write();
+        if is_v4 {
+            ids.0 = id;
+        } else {
+            ids.1 = id;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn self_id(&self, is_v4: bool) -> Id20 {
+        let ids = self.self_ids.read();
+        if is_v4 { ids.0 } else { ids.1 }
+    }
+
+    /// Whether `token` is one we handed out to the node `node_id` at `addr` recently.
+    pub(crate) fn token_is_valid(&self, token: &[u8], node_id: &Id20, addr: SocketAddr) -> bool {
+        self.tokens
+            .read()
+            .iter()
+            .any(|t| t.token[..] == token[..] && t.addr == addr && t.node_id == *node_id)
+    }
+
     pub fn store_peer(&self, announce: &AnnouncePeer<ByteBufOwned>, mut addr: SocketAddr) -> bool {
         // If the info_hash in announce is too far away from us, don't store it.
         // If the token doesn't match, don't store it.
         // If we are out of capacity, don't store it.
         // Otherwise, store it.
-        if announce.info_hash.distance(&self.self_id) > self.max_distance {
+        let self_id = {
+            let ids = self.self_ids.read();
+            if addr.is_ipv4() { ids.0 } else { ids.1 }
+        };
+        if announce.info_hash.distance(&self_id) > self.max_distance {
             trace!("peer store: info_hash too far to store");
             return false;
         }
-        if !self.tokens.read().iter().any(|t| {
-            t.token[..] == announce.token.as_ref()[..] && t.addr == addr && t.node_id == announce.id
-        }) {
+        if !self.token_is_valid(announce.token.as_ref(), &announce.id, addr) {
             trace!("peer store: can't find this token / addr combination");
             return false;
         }

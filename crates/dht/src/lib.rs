@@ -1,3 +1,4 @@
+mod bep42;
 mod bprotocol;
 mod dht;
 mod error;
@@ -11,6 +12,7 @@ use std::time::Duration;
 
 pub use error::{Error, Result};
 
+pub use crate::bep42::{generate_node_id, is_local_address, is_valid_node_id};
 pub use crate::dht::DhtStats;
 pub use crate::dht::{DhtConfig, DhtState, RequestPeersStream};
 pub use librqbit_core::hash_id::Id20;
