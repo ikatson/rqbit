@@ -3,6 +3,8 @@ mod e2e_another_local_client;
 mod e2e_have;
 mod e2e_padded_files;
 mod e2e_stream;
+mod e2e_webseed;
 mod fake_peer;
 mod interop;
 pub mod test_util;
+mod web_seed_server;
