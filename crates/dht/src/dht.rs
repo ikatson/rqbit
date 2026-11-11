@@ -960,6 +960,9 @@ impl DhtState {
     /// torrent file (BEP 5): the bootstrap addresses only seed lookups and do not go into the
     /// routing table themselves. Returns the id the node answered with.
     pub async fn add_node(&self, addr: SocketAddr) -> crate::Result<Id20> {
+        // Answers to an IPv4-mapped address come back from the plain IPv4 one, and the node
+        // belongs in the IPv4 table.
+        let addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
         let id = match self.request(Request::Ping, addr).await? {
             ResponseOrError::Response(r) => r.id,
             ResponseOrError::Error(e) => {
@@ -2608,7 +2611,17 @@ mod tests {
         let b = start_dht(silent.local_addr().unwrap()).await;
         assert_eq!(a.get_stats().routing_table_size, 0);
 
-        let id = a.add_node(b.listen_addr()).await.unwrap();
+        // Given as an IPv4-mapped address, it still lands in the IPv4 table under its plain
+        // address.
+        let b_addr = b.listen_addr();
+        let mapped = SocketAddr::new(
+            match b_addr.ip() {
+                IpAddr::V4(ip) => IpAddr::V6(ip.to_ipv6_mapped()),
+                other => other,
+            },
+            b_addr.port(),
+        );
+        let id = a.add_node(mapped).await.unwrap();
         assert_eq!(id, b.get_stats().id);
         let in_table: Vec<_> = a
             .routing_table_v4
