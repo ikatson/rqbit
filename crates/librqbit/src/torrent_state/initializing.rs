@@ -279,6 +279,14 @@ impl TorrentStateInitializing {
                 .context("error loading have_pieces")?
         };
 
+        // Whatever the check hashes has to come from where the data is stored, not from a
+        // copy a storage keeps in memory (e.g. one taken over from before a recheck).
+        self.shared
+            .spawner
+            .block_in_place_with_semaphore(|| self.files.forget_cached_data())
+            .await
+            .context("error dropping the storage's cached data before the check")?;
+
         let fastresume = self.validate_fastresume(&*bitv_factory, have_pieces).await;
 
         let selected_pieces = compute_selected_pieces(

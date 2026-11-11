@@ -275,6 +275,18 @@ pub trait TorrentStorage: Send + Sync {
     fn finish_move_storage(&self, _commit: bool) -> anyhow::Result<()> {
         unsupported("moving storage")
     }
+
+    /// Forget whatever this storage keeps of the data in memory in front of where it
+    /// stores it, so that the reads after this see what is really stored. Every check of
+    /// the torrent (the initial one, the validation of the fastresume bitfield and
+    /// [`crate::Session::force_recheck`]) calls it before it hashes anything: a cached
+    /// copy of a piece would hide that the piece changed or got damaged where it's stored.
+    ///
+    /// The default does nothing, which is right for a storage that reads straight from
+    /// where the data lives. A storage that wraps another one forwards this to it.
+    fn forget_cached_data(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
@@ -337,6 +349,10 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
         (**self).finish_move_storage(commit)
+    }
+
+    fn forget_cached_data(&self) -> anyhow::Result<()> {
+        (**self).forget_cached_data()
     }
 }
 

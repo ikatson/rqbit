@@ -156,6 +156,10 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
     fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
         self.underlying.finish_move_storage(commit)
     }
+
+    fn forget_cached_data(&self) -> anyhow::Result<()> {
+        self.underlying.forget_cached_data()
+    }
 }
 
 #[cfg(test)]

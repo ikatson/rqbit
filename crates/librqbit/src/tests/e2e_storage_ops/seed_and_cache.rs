@@ -255,3 +255,57 @@ async fn test_seed_mode_without_file_lengths_checks_everything() -> anyhow::Resu
     })
     .await
 }
+
+// A torrent downloaded through the write-through cache has its pieces in the cache. A piece
+// damaged on disk afterwards is still right in the cache, and a recheck has to see the disk:
+// the damaged piece is missing after it, and the whole content was read from the storage
+// under the cache.
+#[cfg(feature = "storage_middleware")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_recheck_reads_the_disk_through_the_write_through_cache() -> anyhow::Result<()> {
+    use crate::storage::middleware::write_through_cache::WriteThroughCacheStorageFactory;
+
+    run(async {
+        let content = Content::new(NESTED_FILES, false);
+        let seed = start_seeder(&content, None).await?;
+        let dir = TempDir::with_prefix("rqbit_recheck_cache")?;
+        let out = dir.path().join("out");
+        let session = new_session(dir.path(), Default::default()).await?;
+        let ctl = Arc::new(Ctl::default());
+        // Room for every piece, so that none is evicted before the recheck.
+        let cache = WriteThroughCacheStorageFactory::new(
+            content.total_len as u64,
+            InstrumentedFactory { ctl: ctl.clone() },
+        );
+        let handle = add(
+            &session,
+            &content,
+            &out,
+            AddTorrentOptions {
+                initial_peers: Some(vec![seed.addr]),
+                storage_factory: Some(cache.boxed()),
+                ..Default::default()
+            },
+        )
+        .await?;
+        wait_completed(&handle).await?;
+        content.assert_at(&out, &[])?;
+
+        // Paused, so that the damaged piece isn't downloaded again after the recheck.
+        session.pause(&handle).await?;
+        content.corrupt(&out, 4);
+        let read_before = ctl.read_bytes.load(Ordering::SeqCst);
+        session.force_recheck(&handle).await?;
+        wait_initialized(&handle).await?;
+
+        assert!(is_paused(&handle), "{:?}", state(&handle));
+        assert_eq!(have_pieces(&handle)?, without(content.all_pieces(), &[4]));
+        let read = ctl.read_bytes.load(Ordering::SeqCst) - read_before;
+        assert!(
+            read >= content.total_len as u64,
+            "the recheck read {read} bytes from under the cache, less than the content"
+        );
+        Ok(())
+    })
+    .await
+}

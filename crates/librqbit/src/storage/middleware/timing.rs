@@ -161,6 +161,15 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
             storage
         )
     }
+
+    fn forget_cached_data(&self) -> anyhow::Result<()> {
+        let storage = &self.name;
+        timeit!(
+            "forget_cached_data",
+            self.underlying.forget_cached_data(),
+            storage
+        )
+    }
 }
 
 #[cfg(test)]
