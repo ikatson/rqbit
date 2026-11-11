@@ -242,7 +242,7 @@ impl TorrentStateLive {
         let up_speed_estimator = SpeedEstimator::default();
 
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
-        let lengths = *paused.chunk_tracker.get_lengths();
+        let lengths = paused.chunk_tracker.get_lengths().clone();
 
         // TODO: make it configurable
         let file_priorities = {
@@ -283,7 +283,7 @@ impl TorrentStateLive {
             }),
             files: paused.files,
             stats: paused.carried_stats.to_atomic(have_bytes),
-            lengths,
+            lengths: lengths.clone(),
             peer_semaphore: Arc::new(Semaphore::new(
                 paused.shared.options.peer_limit.unwrap_or(128),
             )),

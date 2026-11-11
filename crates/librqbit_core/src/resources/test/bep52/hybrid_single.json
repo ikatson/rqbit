@@ -1,0 +1,15 @@
+{
+ "info_hash_v1": "31624a4317d385d2d8df8964e3616583221c9113",
+ "info_hash_v2": "0ce7800adb9f72ccd2789891a51370a246d9d9455eb8cb51134f9198f8fb31c9",
+ "piece_length": 65536,
+ "num_pieces": 4,
+ "total_size": 200000,
+ "files": [
+  {
+   "path": "single.bin",
+   "size": 200000,
+   "offset": 0,
+   "pad": false
+  }
+ ]
+}

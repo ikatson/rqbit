@@ -1,0 +1,81 @@
+{
+ "info_hash_v1": "b3d3c6bfaa034c177bd16abc2798e6c2250b97eb",
+ "info_hash_v2": "df9c415ad49ade9ae3e2562ede90448a3017fb28442cecfd55ef2a3858d00bb4",
+ "piece_length": 65536,
+ "num_pieces": 28,
+ "total_size": 1835008,
+ "files": [
+  {
+   "path": "a/b/c/nested.bin",
+   "size": 300000,
+   "offset": 0,
+   "pad": false
+  },
+  {
+   "path": ".pad/27680",
+   "size": 27680,
+   "offset": 300000,
+   "pad": true
+  },
+  {
+   "path": "a/exact.bin",
+   "size": 131072,
+   "offset": 327680,
+   "pad": false
+  },
+  {
+   "path": "a/small.bin",
+   "size": 5000,
+   "offset": 458752,
+   "pad": false
+  },
+  {
+   "path": ".pad/60536",
+   "size": 60536,
+   "offset": 463752,
+   "pad": true
+  },
+  {
+   "path": "a/three_blocks.bin",
+   "size": 40000,
+   "offset": 524288,
+   "pad": false
+  },
+  {
+   "path": ".pad/25536",
+   "size": 25536,
+   "offset": 564288,
+   "pad": true
+  },
+  {
+   "path": "empty.txt",
+   "size": 0,
+   "offset": 589824,
+   "pad": false
+  },
+  {
+   "path": "z_big.bin",
+   "size": 1100000,
+   "offset": 589824,
+   "pad": false
+  },
+  {
+   "path": ".pad/14112",
+   "size": 14112,
+   "offset": 1689824,
+   "pad": true
+  },
+  {
+   "path": "ünïcødé/日本語.bin",
+   "size": 70000,
+   "offset": 1703936,
+   "pad": false
+  },
+  {
+   "path": ".pad/61072",
+   "size": 61072,
+   "offset": 1773936,
+   "pad": true
+  }
+ ]
+}

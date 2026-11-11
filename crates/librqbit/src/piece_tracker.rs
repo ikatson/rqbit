@@ -824,9 +824,13 @@ mod tests {
         for i in 0..3 {
             selected.set(i, true);
         }
-        let chunks =
-            ChunkTracker::new(have.into_dyn(), selected, lengths, &make_test_file_infos(4))
-                .unwrap();
+        let chunks = ChunkTracker::new(
+            have.into_dyn(),
+            selected,
+            lengths.clone(),
+            &make_test_file_infos(4),
+        )
+        .unwrap();
         let mut tracker = PieceTracker::new(chunks);
         let p = |i| lengths.validate_piece_index(i).unwrap();
 

@@ -696,7 +696,7 @@ mod tests {
         let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
         let mut selected = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
         selected.get_mut(0..3).unwrap().fill(true);
-        let mut ct = ChunkTracker::new(have.into_dyn(), selected, l, &files).unwrap();
+        let mut ct = ChunkTracker::new(have.into_dyn(), selected, l.clone(), &files).unwrap();
         let p0 = l.validate_piece_index(0).unwrap();
 
         // A peer takes the piece, delivers all of it, and the hash check starts: it is

@@ -350,7 +350,7 @@ impl TorrentStateInitializing {
         let chunk_tracker = ChunkTracker::new(
             have_pieces.into_dyn(),
             selected_pieces,
-            *self.metadata.lengths(),
+            self.metadata.lengths().clone(),
             &self.metadata.file_infos,
         )
         .context("error creating chunk tracker")?;
