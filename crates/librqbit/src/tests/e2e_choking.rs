@@ -306,6 +306,10 @@ async fn test_client_asks_again_for_what_a_choke_dropped() -> anyhow::Result<()>
         tokio::pin!(done);
         loop {
             tokio::select! {
+                // Completion first: the client hangs up on `peer` (a seeder) once it has the
+                // whole torrent, after it signalled the completion, so a busy test task that finds
+                // both ready must not take the close for a failure.
+                biased;
                 r = &mut done => {
                     r?;
                     break;
