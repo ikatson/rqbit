@@ -17,7 +17,16 @@
 //!
 //! `https` proxies (TLS to the proxy itself) are not supported.
 
-use std::{fmt, str::FromStr};
+use std::{fmt, net::SocketAddr, str::FromStr};
+
+mod error;
+mod http_connect;
+
+pub use error::ProxyError;
+pub use http_connect::{HttpTunnel, http_connect, http_connect_with_stream};
+
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 
 /// The protocol spoken to a proxy, chosen by the scheme of the proxy URL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -280,6 +289,31 @@ impl fmt::Display for HostPort<'_> {
     }
 }
 
+/// Where a proxy should connect or send to: an IP address, or a host name that the proxy
+/// resolves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetAddr<'a> {
+    /// An IP address and a port.
+    Ip(SocketAddr),
+    /// A host name and a port.
+    Domain(&'a str, u16),
+}
+
+impl fmt::Display for TargetAddr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TargetAddr::Ip(addr) => addr.fmt(f),
+            TargetAddr::Domain(host, port) => HostPort(host, *port).fmt(f),
+        }
+    }
+}
+
+impl From<SocketAddr> for TargetAddr<'_> {
+    fn from(addr: SocketAddr) -> Self {
+        TargetAddr::Ip(addr)
+    }
+}
+
 /// Whether the authority of a URL that already parsed ends with `:port`.
 fn authority_has_port(input: &str) -> bool {
     let rest = input.split_once("://").map_or(input, |(_, r)| r);
@@ -437,7 +471,7 @@ mod tests {
             Err(CredentialsTooLong)
         );
         assert!(matches!(ProxyConfig::parse("not a url"), Err(Invalid(_))));
-        assert!(matches!(ProxyConfig::parse("socks5://"), Err(_)));
+        assert!(ProxyConfig::parse("socks5://").is_err());
         assert!(matches!(
             ProxyConfig::parse("socks5://h:99999"),
             Err(Invalid(_))

@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::bail;
-use librqbit_core::proxy::ProxyConfig;
+use librqbit_core::proxy::{ProxyConfig, ProxyKind, TargetAddr, http_connect};
 use librqbit_dualstack_sockets::ConnectOpts;
 use librqbit_utp::{BindDevice, UtpSocketUdp};
 use serde::Serialize;
@@ -13,14 +13,21 @@ use crate::{
     vectored_traits::AsyncReadVectoredIntoCompat,
 };
 
-#[derive(Debug, Clone, Copy, Serialize)]
+/// The transport of a peer connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ConnectionKind {
+    /// Direct TCP.
     #[serde(rename = "tcp")]
     Tcp,
+    /// Direct uTP.
     #[serde(rename = "utp")]
     Utp,
+    /// TCP through a SOCKS5 or SOCKS4 proxy.
     #[serde(rename = "socks")]
     Socks,
+    /// TCP through an HTTP proxy (`CONNECT` tunnel).
+    #[serde(rename = "http_proxy")]
+    HttpProxy,
 }
 
 impl std::fmt::Display for ConnectionKind {
@@ -29,16 +36,34 @@ impl std::fmt::Display for ConnectionKind {
             ConnectionKind::Tcp => f.write_str("tcp"),
             ConnectionKind::Utp => f.write_str("uTP"),
             ConnectionKind::Socks => f.write_str("socks"),
+            ConnectionKind::HttpProxy => f.write_str("http proxy"),
         }
     }
 }
 
+/// How a session makes outgoing connections.
 pub struct ConnectionOptions {
-    // socks5://[username:password@]host:port
-    // If set, all outgoing connections will go through the proxy over TCP.
+    /// A proxy for the traffic of the session, as a URL: `socks5://`, `socks5h://` (the proxy
+    /// resolves host names), `socks4://`, `socks4a://` or `http://` (`CONNECT` tunnels), with
+    /// optional `user:password@` (the user id alone for SOCKS4), e.g.
+    /// `socks5h://user:secret@proxy.example:1080`.
+    ///
+    /// Tracker traffic and the other HTTP requests of the session always go through it. Peer
+    /// connections and the DHT do too unless [`Self::proxy_peer_connections`] is false. What
+    /// can't go through a proxy is turned off instead of being sent directly: UDP trackers and
+    /// the DHT behind a SOCKS4 or HTTP proxy (only SOCKS5 relays UDP), and outgoing uTP behind
+    /// any proxy (TCP through the proxy is used instead). Incoming connections are not affected
+    /// (see [`crate::ListenerOptions`]), but a session behind a proxy is normally not reachable
+    /// from outside. Port mapping (UPnP / NAT-PMP) and local service discovery only talk to the
+    /// local network and stay direct.
     pub proxy_url: Option<String>,
-    // TCP outgoing connections are enabled by default
+    /// Whether peer connections and the DHT go through [`Self::proxy_url`] (default true). When
+    /// false, only tracker traffic and the HTTP requests use the proxy; peers, the DHT and
+    /// outgoing uTP work directly as without a proxy.
+    pub proxy_peer_connections: bool,
+    /// Whether outgoing TCP connections are made (default true).
     pub enable_tcp: bool,
+    /// Options of the peer connections.
     pub peer_opts: Option<PeerConnectionOptions>,
 }
 
@@ -47,6 +72,7 @@ impl Default for ConnectionOptions {
         Self {
             enable_tcp: true,
             proxy_url: None,
+            proxy_peer_connections: true,
             peer_opts: None,
         }
     }
@@ -61,23 +87,40 @@ pub(crate) struct StreamConnectorArgs {
     pub ipv4_only: bool,
 }
 
-async fn socks5_connect(
+/// Opens a TCP connection to `addr` through the proxy.
+async fn proxy_connect(
     proxy: &ProxyConfig,
     addr: SocketAddr,
-) -> tokio_socks::Result<(
-    impl tokio::io::AsyncRead + Unpin + 'static,
-    impl tokio::io::AsyncWrite + Unpin + 'static,
-)> {
+) -> Result<(BoxAsyncReadVectored, BoxAsyncWrite)> {
+    fn boxed(
+        stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
+    ) -> (BoxAsyncReadVectored, BoxAsyncWrite) {
+        let (r, w) = tokio::io::split(stream);
+        (Box::new(r.into_vectored_compat()), Box::new(w))
+    }
+
     let proxy_addr = (proxy.host(), proxy.port());
-
-    let stream = if let (Some(username), Some(password)) = (proxy.username(), proxy.password()) {
-        tokio_socks::tcp::Socks5Stream::connect_with_password(proxy_addr, addr, username, password)
-            .await?
-    } else {
-        tokio_socks::tcp::Socks5Stream::connect(proxy_addr, addr).await?
-    };
-
-    Ok(tokio::io::split(stream))
+    Ok(match proxy.kind() {
+        ProxyKind::Socks5 | ProxyKind::Socks5h => {
+            boxed(match (proxy.username(), proxy.password()) {
+                (Some(username), Some(password)) => {
+                    tokio_socks::tcp::Socks5Stream::connect_with_password(
+                        proxy_addr, addr, username, password,
+                    )
+                    .await?
+                }
+                _ => tokio_socks::tcp::Socks5Stream::connect(proxy_addr, addr).await?,
+            })
+        }
+        ProxyKind::Socks4 | ProxyKind::Socks4a => boxed(match proxy.username() {
+            Some(user_id) => {
+                tokio_socks::tcp::Socks4Stream::connect_with_userid(proxy_addr, addr, user_id)
+                    .await?
+            }
+            None => tokio_socks::tcp::Socks4Stream::connect(proxy_addr, addr).await?,
+        }),
+        ProxyKind::Http => boxed(http_connect(proxy, TargetAddr::Ip(addr)).await?),
+    })
 }
 
 gen_stats!(SingleStatAtomic SingleStatSnapshot, [
@@ -91,6 +134,7 @@ gen_stats!(PerFamilyAtomic PerFamilySnapshot, [], [
 ]);
 gen_stats!(ConnectStatsAtomic ConnectStatsSnapshot, [], [
     socks PerFamilyAtomic PerFamilySnapshot,
+    http_proxy PerFamilyAtomic PerFamilySnapshot,
     tcp PerFamilyAtomic PerFamilySnapshot,
     utp PerFamilyAtomic PerFamilySnapshot
 ]);
@@ -114,7 +158,7 @@ impl StreamConnector {
             config.utp_socket.is_some(),
         ) {
             (false, false, false) => {
-                bail!("no way to connect to peers, enable TCP, uTP or socks proxy")
+                bail!("no way to connect to peers, enable TCP, uTP or a proxy")
             }
             _ => {
                 // TODO: maybe validate other combinations. For now there's no way to disable TCP
@@ -136,6 +180,7 @@ impl StreamConnector {
             ConnectionKind::Tcp => &self.stats.tcp,
             ConnectionKind::Utp => &self.stats.utp,
             ConnectionKind::Socks => &self.stats.socks,
+            ConnectionKind::HttpProxy => &self.stats.http_proxy,
         };
         if is_v6 { &stat.v6 } else { &stat.v4 }
     }
@@ -195,20 +240,18 @@ impl StreamConnector {
             )));
         }
 
+        // Behind a proxy every outgoing connection is TCP through it: uTP can't be relayed (it
+        // would go out directly), and a failure is the result, never a direct retry.
         if let Some(proxy) = self.proxy_config.as_ref() {
+            let kind = match proxy.kind() {
+                ProxyKind::Http => ConnectionKind::HttpProxy,
+                _ => ConnectionKind::Socks,
+            };
             let (r, w) = self
-                .with_stat(
-                    ConnectionKind::Socks,
-                    addr.is_ipv6(),
-                    socks5_connect(proxy, addr),
-                )
+                .with_stat(kind, addr.is_ipv6(), proxy_connect(proxy, addr))
                 .await?;
-            debug!(?addr, "connected through SOCKS5");
-            return Ok((
-                ConnectionKind::Socks,
-                Box::new(r.into_vectored_compat()),
-                Box::new(w),
-            ));
+            debug!(?addr, proxy = %proxy.kind(), "connected through proxy");
+            return Ok((kind, r, w));
         }
 
         // Try to connect over TCP first. If in 1 second we haven't connected, try uTP also (if configured).

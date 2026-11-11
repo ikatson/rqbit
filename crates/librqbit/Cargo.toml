@@ -136,6 +136,8 @@ tokio = { workspace = true, features = ["process"] }
 tokio-test.workspace = true
 tempfile.workspace = true
 pollster.workspace = true
+# The proxy tests use the fake proxies of librqbit-core.
+librqbit-core = { workspace = true, features = ["test-util"] }
 
 [[example]]
 name = "simulate_traffic"

@@ -13,10 +13,12 @@ readme = "README.md"
 default = ["sha1-crypto-hash"]
 sha1-crypto-hash = ["sha1w/sha1-crypto-hash"]
 sha1-ring = ["sha1w/sha1-ring"]
+# Fake proxies (SOCKS5 with UDP ASSOCIATE, SOCKS4/4a, HTTP CONNECT) for tests of other crates.
+test-util = []
 
 [dependencies]
 tracing.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
 hex.workspace = true
 anyhow.workspace = true
 url.workspace = true
@@ -37,6 +39,7 @@ memchr.workspace = true
 thiserror.workspace = true
 chardetng.workspace = true
 encoding_rs.workspace = true
+httparse.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

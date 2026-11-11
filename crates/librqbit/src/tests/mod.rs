@@ -5,6 +5,7 @@ mod e2e_handshake_timeout;
 mod e2e_have;
 mod e2e_padded_files;
 mod e2e_peer_backoff;
+mod e2e_proxy;
 mod e2e_stream;
 mod e2e_trackers;
 mod fake_peer;

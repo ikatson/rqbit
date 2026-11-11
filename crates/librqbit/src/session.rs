@@ -57,7 +57,7 @@ use librqbit_core::{
     directories::get_configuration_directory,
     magnet::Magnet,
     peer_id::generate_azereus_style,
-    proxy::{ProxyConfig, ProxyKind},
+    proxy::ProxyConfig,
     spawn_utils::spawn_with_cancel,
     torrent_metainfo::{TorrentMetaV1Owned, ValidatedTorrentMetaV1Info},
 };
@@ -620,6 +620,21 @@ impl Session {
                 None => None,
             };
 
+            // One parsed proxy for every consumer. Tracker traffic always goes through it;
+            // peers and the DHT only with `proxy_peer_connections`.
+            let proxy_config = opts
+                .connect
+                .as_ref()
+                .and_then(|s| s.proxy_url.as_deref())
+                .map(ProxyConfig::parse)
+                .transpose()
+                .context("error parsing the proxy URL")?;
+            let peer_proxy = proxy_config.clone().filter(|_| {
+                opts.connect
+                    .as_ref()
+                    .is_none_or(|c| c.proxy_peer_connections)
+            });
+
             let listen_result = if let Some(listen_opts) = opts.listen.take() {
                 Some(
                     listen_opts
@@ -727,18 +742,6 @@ impl Session {
                 .await
                 .context("error initializing session persistence store")?;
 
-            let proxy_config = match opts.connect.as_ref().and_then(|s| s.proxy_url.as_deref()) {
-                Some(url) => {
-                    let config = ProxyConfig::parse(url).context("error parsing the proxy URL")?;
-                    match config.kind() {
-                        ProxyKind::Socks5 | ProxyKind::Socks5h => {}
-                        other => bail!("{other} proxies are not supported yet"),
-                    }
-                    Some(config)
-                }
-                None => None,
-            };
-
             let client_name_and_version = opts
                 .client_name_and_version
                 .unwrap_or_else(|| crate::client_name_and_version().to_owned());
@@ -766,7 +769,7 @@ impl Session {
             let stream_connector = Arc::new(
                 StreamConnector::new(StreamConnectorArgs {
                     enable_tcp: opts.connect.as_ref().map(|c| c.enable_tcp).unwrap_or(true),
-                    proxy: proxy_config,
+                    proxy: peer_proxy.clone(),
                     utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
                     bind_device: bind_device.clone(),
                     ipv4_only: opts.ipv4_only,

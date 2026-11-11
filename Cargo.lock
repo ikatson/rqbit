@@ -3207,6 +3207,7 @@ dependencies = [
  "directories",
  "encoding_rs",
  "hex 0.4.3",
+ "httparse",
  "itertools 0.15.0",
  "librqbit-bencode",
  "librqbit-buffers",

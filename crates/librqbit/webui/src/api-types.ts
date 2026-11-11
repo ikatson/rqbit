@@ -64,7 +64,7 @@ export interface AggregatePeerStats {
   not_needed: number;
 }
 
-export type ConnectionKind = "tcp" | "utp" | "socks";
+export type ConnectionKind = "tcp" | "utp" | "socks" | "http_proxy";
 
 export interface PeerCounters {
   incoming_connections: number;
@@ -105,6 +105,7 @@ export interface ConnectionStats {
   tcp: ConnectionStatsPerFamily;
   utp: ConnectionStatsPerFamily;
   socks: ConnectionStatsPerFamily;
+  http_proxy: ConnectionStatsPerFamily;
 }
 
 export interface SessionCounters {
