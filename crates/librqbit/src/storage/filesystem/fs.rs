@@ -230,7 +230,9 @@ impl TorrentStorage for FilesystemStorage {
             }
             let created = relocate::create_parents(&dst)?;
             if relocate::exists(&src) {
-                if let Err(e) = relocate::move_file(&src, &dst, &CancellationToken::new()) {
+                let moved =
+                    relocate::move_file(&relocate::OsFs, &src, &dst, &CancellationToken::new());
+                if let Err(e) = moved {
                     relocate::remove_created_dirs(&created);
                     return Err(e);
                 }
@@ -254,7 +256,7 @@ impl TorrentStorage for FilesystemStorage {
             .map(|f| f.close())
             .collect::<Vec<_>>();
 
-        let moved = match relocate::move_files(&old_folder, request) {
+        let moved = match relocate::move_files(&relocate::OsFs, &old_folder, request) {
             Ok(moved) => moved,
             Err(e) => {
                 return Err(
@@ -306,7 +308,7 @@ impl FilesystemStorage {
             f.close();
         }
         let mut errors = Vec::new();
-        if let Err(left) = move_.moved.rollback() {
+        if let Err(left) = move_.moved.rollback(&relocate::OsFs) {
             errors.push(format!("undoing the move failed: {left}"));
         }
         if let Err(e) = self.reopen_all(&move_.old_folder, &move_.files, &move_.was_open) {

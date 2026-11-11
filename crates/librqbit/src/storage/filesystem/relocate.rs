@@ -18,19 +18,66 @@ use crate::storage::{MoveStorageMode, MoveStorageOutcome, MoveStorageRequest};
 // cancellation often.
 const COPY_BUFFER_LEN: usize = 1024 * 1024;
 
+/// The filesystem calls that decide how a file moves: the rename, and the writes and flushes
+/// of a copy. [`OsFs`] makes them; tests put their own in place to reach what one filesystem
+/// can't show (a rename across devices, a disk that fills up, the flushes made).
+pub(crate) trait FsOps {
+    /// Renames `from` to `to`, as [`fs::rename`].
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// Writes all of `buf` at the current position of `file`, which is open at `path`.
+    fn write_all(&self, file: &mut File, path: &Path, buf: &[u8]) -> io::Result<()>;
+    /// Flushes the data and metadata of `file`, which is open at `path`, to disk.
+    fn sync_file(&self, file: &File, path: &Path) -> io::Result<()>;
+    /// Flushes the entries of the directory `dir` to disk.
+    fn sync_dir(&self, dir: &Path) -> io::Result<()>;
+}
+
+/// [`FsOps`] made by the operating system.
+pub(crate) struct OsFs;
+
+impl FsOps for OsFs {
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        fs::rename(from, to)
+    }
+
+    fn write_all(&self, file: &mut File, _path: &Path, buf: &[u8]) -> io::Result<()> {
+        file.write_all(buf)
+    }
+
+    fn sync_file(&self, file: &File, _path: &Path) -> io::Result<()> {
+        file.sync_all()
+    }
+
+    #[cfg(unix)]
+    fn sync_dir(&self, dir: &Path) -> io::Result<()> {
+        File::open(dir).and_then(|d| d.sync_all())
+    }
+
+    // Directories can't be opened as files here.
+    #[cfg(not(unix))]
+    fn sync_dir(&self, _dir: &Path) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Moves the file `src` to `dst`, which must not exist: a rename when the two are on the
 /// same filesystem, otherwise a copy (flushed to disk and length-checked) followed by the
 /// removal of `src`. A symbolic link is moved as a link to the same file. On error, `src` is
 /// where it was and `dst` doesn't exist.
-pub(crate) fn move_file(src: &Path, dst: &Path, cancel: &CancellationToken) -> anyhow::Result<()> {
+pub(crate) fn move_file(
+    fs_ops: &dyn FsOps,
+    src: &Path,
+    dst: &Path,
+    cancel: &CancellationToken,
+) -> anyhow::Result<()> {
     if fs::symlink_metadata(src).is_ok_and(|m| m.file_type().is_symlink()) {
         return move_symlink(src, dst);
     }
-    match fs::rename(src, dst) {
+    match fs_ops.rename(src, dst) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
             debug!(?src, ?dst, "can't rename across filesystems, copying");
-            copy_then_remove(src, dst, cancel)
+            copy_then_remove(fs_ops, src, dst, cancel)
         }
         Err(e) => Err(e).with_context(|| format!("error renaming {src:?} to {dst:?}")),
     }
@@ -75,6 +122,7 @@ fn make_symlink(_target: &Path, _link: &Path) -> io::Result<()> {
 /// to `dst` ([`partial_path`]) and gets its name only once complete and flushed, so an
 /// interrupted copy (even by a crash) never looks like the file.
 pub(crate) fn copy_then_remove(
+    fs_ops: &dyn FsOps,
     src: &Path,
     dst: &Path,
     cancel: &CancellationToken,
@@ -91,12 +139,13 @@ pub(crate) fn copy_then_remove(
         .create_new(true)
         .open(&partial)
         .with_context(|| format!("error creating {partial:?}"))?;
-    let copied = copy_and_sync(src, to, &partial, cancel).and_then(|()| publish(&partial, dst));
+    let copied = copy_and_sync(fs_ops, src, to, &partial, cancel)
+        .and_then(|()| publish(fs_ops, &partial, dst));
     if let Err(e) = copied {
         remove_leftover(&partial);
         return Err(e);
     }
-    sync_parent(dst);
+    sync_parent(fs_ops, dst);
     if let Err(e) = fs::remove_file(src) {
         // Two copies would leave the caller unsure which one is the file: keep the original.
         remove_leftover(dst);
@@ -117,7 +166,7 @@ pub(crate) fn partial_path(path: &Path) -> anyhow::Result<PathBuf> {
 
 // Gives the finished copy at `partial` the name `dst`, without replacing a file that appeared
 // there meanwhile.
-fn publish(partial: &Path, dst: &Path) -> anyhow::Result<()> {
+fn publish(fs_ops: &dyn FsOps, partial: &Path, dst: &Path) -> anyhow::Result<()> {
     match fs::hard_link(partial, dst) {
         Ok(()) => {
             if let Err(e) = fs::remove_file(partial) {
@@ -135,7 +184,8 @@ fn publish(partial: &Path, dst: &Path) -> anyhow::Result<()> {
             if exists(dst) {
                 bail!("{dst:?} already exists");
             }
-            fs::rename(partial, dst)
+            fs_ops
+                .rename(partial, dst)
                 .with_context(|| format!("error renaming {partial:?} to {dst:?}"))
         }
     }
@@ -150,6 +200,7 @@ fn remove_leftover(path: &Path) {
 }
 
 fn copy_and_sync(
+    fs_ops: &dyn FsOps,
     src: &Path,
     mut to: File,
     dst: &Path,
@@ -181,7 +232,8 @@ fn copy_and_sync(
             ))
             .with_context(|| format!("error seeking in {dst:?}"))?;
         } else {
-            to.write_all(chunk)
+            fs_ops
+                .write_all(&mut to, dst, chunk)
                 .with_context(|| format!("error writing {dst:?}"))?;
         }
         total += len;
@@ -189,7 +241,8 @@ fn copy_and_sync(
     // Gives the file the zeros it ends with, if it does.
     to.set_len(total)
         .with_context(|| format!("error setting the length of {dst:?}"))?;
-    to.sync_all()
+    fs_ops
+        .sync_file(&to, dst)
         .with_context(|| format!("error flushing {dst:?} to disk"))?;
     let copied = to
         .metadata()
@@ -211,19 +264,14 @@ fn copy_and_sync(
 
 // Makes the new directory entry of `path` durable before the source goes away. Not every
 // filesystem can sync a directory, so a failure is only logged.
-#[cfg(unix)]
-fn sync_parent(path: &Path) {
+fn sync_parent(fs_ops: &dyn FsOps, path: &Path) {
     let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) else {
         return;
     };
-    if let Err(e) = File::open(parent).and_then(|d| d.sync_all()) {
+    if let Err(e) = fs_ops.sync_dir(parent) {
         debug!(?parent, "error flushing the directory to disk: {e:#}");
     }
 }
-
-// Directories can't be opened as files here.
-#[cfg(not(unix))]
-fn sync_parent(_path: &Path) {}
 
 /// Whether the two paths name the same existing file (following links): a change of case
 /// on a case-insensitive filesystem, another name of the same directory, a hard link.
@@ -433,7 +481,7 @@ pub(crate) fn undo_interrupted_move(pairs: &[(PathBuf, PathBuf)]) -> Result<(), 
             }
         }
         if !exists(src) && exists(dst) {
-            let undone = create_parents(src).and_then(|_| move_file(dst, src, &never));
+            let undone = create_parents(src).and_then(|_| move_file(&OsFs, dst, src, &never));
             if let Err(e) = undone {
                 failures.push(format!("{src:?} is at {dst:?} ({e:#})"));
                 continue;
@@ -514,7 +562,7 @@ impl MovedFiles {
     }
 
     /// Undoes the move. Returns a description of every file the undo couldn't put back.
-    pub(crate) fn rollback(self) -> Result<(), String> {
+    pub(crate) fn rollback(self, fs_ops: &dyn FsOps) -> Result<(), String> {
         // The undo must finish even if the move was cancelled.
         let never = CancellationToken::new();
         let mut failures = Vec::new();
@@ -525,7 +573,7 @@ impl MovedFiles {
             else {
                 continue;
             };
-            if let Err(e) = move_file(&dst, &src, &never) {
+            if let Err(e) = move_file(fs_ops, &dst, &src, &never) {
                 failures.push(format!("{src:?} is at {dst:?} ({e:#})"));
                 if let Some(aside) = aside {
                     failures.push(format!("the file that was at {dst:?} is at {aside:?}"));
@@ -533,7 +581,7 @@ impl MovedFiles {
                 continue;
             }
             if let Some(aside) = aside
-                && let Err(e) = fs::rename(&aside, &dst)
+                && let Err(e) = fs_ops.rename(&aside, &dst)
             {
                 failures.push(format!(
                     "the file that was at {dst:?} is at {aside:?} ({e:#})"
@@ -549,8 +597,8 @@ impl MovedFiles {
     }
 }
 
-fn with_rollback(moved: MovedFiles, error: anyhow::Error) -> anyhow::Error {
-    match moved.rollback() {
+fn with_rollback(fs_ops: &dyn FsOps, moved: MovedFiles, error: anyhow::Error) -> anyhow::Error {
+    match moved.rollback(fs_ops) {
         Ok(()) => error,
         Err(left) => error.context(format!("and undoing the move failed: {left}")),
     }
@@ -562,6 +610,7 @@ fn with_rollback(moved: MovedFiles, error: anyhow::Error) -> anyhow::Error {
 /// as the filesystem resolves them (links, `.`, `..`, case): another name of the old folder
 /// moves nothing.
 pub(crate) fn move_files(
+    fs_ops: &dyn FsOps,
     old_folder: &Path,
     request: &MoveStorageRequest<'_>,
 ) -> anyhow::Result<MovedFiles> {
@@ -615,14 +664,15 @@ pub(crate) fn move_files(
     }
 
     for (idx, rel) in files {
-        if let Err(e) = move_one(&mut moved, idx, rel, new_folder, request) {
-            return Err(with_rollback(moved, e));
+        if let Err(e) = move_one(fs_ops, &mut moved, idx, rel, new_folder, request) {
+            return Err(with_rollback(fs_ops, moved, e));
         }
     }
     Ok(moved)
 }
 
 fn move_one(
+    fs_ops: &dyn FsOps,
     moved: &mut MovedFiles,
     idx: usize,
     rel: &Path,
@@ -668,10 +718,11 @@ fn move_one(
             return Ok(());
         }
         let aside = aside_path(&dst)?;
-        fs::rename(&dst, &aside)
+        fs_ops
+            .rename(&dst, &aside)
             .with_context(|| format!("error setting {dst:?} aside to {aside:?}"))?;
-        if let Err(e) = move_file(&src, &dst, request.cancel) {
-            if let Err(re) = fs::rename(&aside, &dst) {
+        if let Err(e) = move_file(fs_ops, &src, &dst, request.cancel) {
+            if let Err(re) = fs_ops.rename(&aside, &dst) {
                 return Err(e.context(format!(
                     "and the file that was at {dst:?} is left at {aside:?} ({re:#})"
                 )));
@@ -693,7 +744,7 @@ fn move_one(
     }
     let created = create_parents(&dst)?;
     moved.created_dirs.extend(created);
-    move_file(&src, &dst, request.cancel)?;
+    move_file(fs_ops, &src, &dst, request.cancel)?;
     moved.steps.push(Step::Moved {
         relative: rel.to_owned(),
         src,
@@ -709,7 +760,7 @@ mod tests {
 
     use tokio_util::sync::CancellationToken;
 
-    use super::{copy_then_remove, create_parents, move_files, remove_empty_parents};
+    use super::{OsFs, copy_then_remove, create_parents, move_files, remove_empty_parents};
     use crate::storage::{MoveStorageMode, MoveStorageRequest};
 
     fn write(path: &Path, content: &[u8]) {
@@ -732,7 +783,7 @@ mod tests {
             .take(super::COPY_BUFFER_LEN * 2 + 17)
             .collect::<Vec<_>>();
         write(&src, &content);
-        copy_then_remove(&src, &dst, &CancellationToken::new()).unwrap();
+        copy_then_remove(&OsFs, &src, &dst, &CancellationToken::new()).unwrap();
         assert!(!src.exists());
         assert_eq!(read(&dst), content);
     }
@@ -745,7 +796,7 @@ mod tests {
         write(&src, b"data");
         let cancel = CancellationToken::new();
         cancel.cancel();
-        copy_then_remove(&src, &dst, &cancel).unwrap_err();
+        copy_then_remove(&OsFs, &src, &dst, &cancel).unwrap_err();
         assert_eq!(read(&src), b"data");
         assert!(!dst.exists());
     }
@@ -807,17 +858,19 @@ mod tests {
         let cancel = CancellationToken::new();
 
         let moved = move_files(
+            &OsFs,
             &old,
             &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
         )
         .unwrap();
         assert_eq!(read(&new.join("d/one")), b"one");
-        moved.rollback().unwrap();
+        moved.rollback(&OsFs).unwrap();
         assert_eq!(read(&old.join("d/one")), b"one");
         assert_eq!(read(&old.join("two")), b"two");
         assert!(!new.join("d").exists(), "created directories are removed");
 
         let moved = move_files(
+            &OsFs,
             &old,
             &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
         )
@@ -852,6 +905,7 @@ mod tests {
 
         let (_dir, old, new) = setup();
         let err = move_files(
+            &OsFs,
             &old,
             &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
         )
@@ -862,6 +916,7 @@ mod tests {
 
         let (_dir, old, new) = setup();
         let moved = move_files(
+            &OsFs,
             &old,
             &request(&new, &files, MoveStorageMode::Overwrite, &cancel),
         )
@@ -875,6 +930,7 @@ mod tests {
 
         let (_dir, old, new) = setup();
         let moved = move_files(
+            &OsFs,
             &old,
             &request(&new, &files, MoveStorageMode::KeepExisting, &cancel),
         )
@@ -901,12 +957,13 @@ mod tests {
         let files = vec![Some(PathBuf::from("a"))];
         let cancel = CancellationToken::new();
         let moved = move_files(
+            &OsFs,
             &old,
             &request(&new, &files, MoveStorageMode::Overwrite, &cancel),
         )
         .unwrap();
         assert_eq!(read(&new.join("a")), b"ours");
-        moved.rollback().unwrap();
+        moved.rollback(&OsFs).unwrap();
         assert_eq!(read(&old.join("a")), b"ours");
         assert_eq!(read(&new.join("a")), b"theirs");
         assert_eq!(std::fs::read_dir(&new).unwrap().count(), 1, "no leftovers");
@@ -924,6 +981,7 @@ mod tests {
         let files = vec![Some(PathBuf::from("a")), Some(PathBuf::from("b/c"))];
         let cancel = CancellationToken::new();
         move_files(
+            &OsFs,
             &old,
             &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
         )
@@ -945,6 +1003,7 @@ mod tests {
         let cancel = CancellationToken::new();
         cancel.cancel();
         move_files(
+            &OsFs,
             &old,
             &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
         )
@@ -963,6 +1022,7 @@ mod tests {
         let files = vec![Some(PathBuf::from("x/f")), Some(PathBuf::from("f"))];
         let cancel = CancellationToken::new();
         let err = move_files(
+            &OsFs,
             &old,
             &request(dir.path(), &files, MoveStorageMode::Overwrite, &cancel),
         )
@@ -979,6 +1039,7 @@ mod tests {
         let files = vec![Some(PathBuf::from("../escape"))];
         let cancel = CancellationToken::new();
         move_files(
+            &OsFs,
             &dir.path().join("old"),
             &request(
                 &dir.path().join("new"),
