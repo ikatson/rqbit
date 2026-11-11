@@ -101,7 +101,6 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                     max_random_sleep_ms: rand::rng().random_range(0u8..16),
                 }
                 .as_peer_id();
-                let listen_port = 15100u16 + i as u16;
                 let session = crate::Session::new_with_opts(
                     std::env::temp_dir().join("does_not_exist"),
                     SessionOptions {
@@ -109,7 +108,8 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                         peer_id: Some(peer_id),
                         listen: Some(ListenerOptions {
                             mode,
-                            listen_addr: (Ipv4Addr::LOCALHOST, listen_port).into(),
+                            // Any free port: a fixed one may be taken by another process.
+                            listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                             ..Default::default()
                         }),
                         root_span: Some(error_span!(parent: None, "server", id = i)),
@@ -216,7 +216,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                 listen: if mode.utp_enabled() {
                     Some(ListenerOptions {
                         mode: ListenerMode::UtpOnly,
-                        listen_addr: ([127, 0, 0, 1], 15099).into(),
+                        listen_addr: ([127, 0, 0, 1], 0).into(),
                         ..Default::default()
                     })
                 } else {

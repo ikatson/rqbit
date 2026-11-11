@@ -30,7 +30,7 @@ use crate::{
     UploadSlots, create_torrent,
     limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
-    tests::test_util::{create_default_random_dir_with_torrents, setup_test_logging},
+    tests::test_util::{create_default_random_dir_with_torrents, setup_test_logging, wait_until},
     torrent_state::ManagedTorrentHandle,
 };
 
@@ -546,6 +546,20 @@ pub(super) fn uploaded(f: &Fixture) -> u64 {
     f.handle.live().map_or(0, |l| l.get_uploaded_bytes())
 }
 
+/// A block is counted as uploaded once its write returns, which may be after the peer has read
+/// it: the counter is waited for.
+pub(super) async fn expect_uploaded(f: &Fixture, bytes: u64) -> anyhow::Result<()> {
+    wait_until(
+        || {
+            let got = uploaded(f);
+            anyhow::ensure!(got == bytes, "uploaded {got}, expected {bytes}");
+            Ok(())
+        },
+        Duration::from_secs(5),
+    )
+    .await
+}
+
 // The harness itself: a session serves the blocks a wire-level peer asks for.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fake_peer_downloads_a_block_from_a_seeder() -> anyhow::Result<()> {
@@ -558,7 +572,7 @@ async fn test_fake_peer_downloads_a_block_from_a_seeder() -> anyhow::Result<()> 
         let pieces = peer.expect_pieces(1, Duration::from_secs(10)).await?;
         assert_eq!((pieces[0].0, pieces[0].1), (1, BLOCK));
         assert_eq!(pieces[0].2, seed.block(1, BLOCK, BLOCK));
-        assert_eq!(uploaded(&seed), BLOCK as u64);
+        expect_uploaded(&seed, BLOCK as u64).await?;
         Ok(())
     })
     .await

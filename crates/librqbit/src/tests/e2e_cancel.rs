@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use super::fake_peer::{BLOCK, FakePeer, SeederOpts, Wire, peer_id, run, start_seeder, uploaded};
+use super::fake_peer::{
+    BLOCK, FakePeer, SeederOpts, Wire, expect_uploaded, peer_id, run, start_seeder,
+};
 
 // A request that the peer cancels while it waits for its turn is neither read nor sent nor
 // counted as uploaded.
@@ -35,13 +37,13 @@ async fn test_cancelled_blocks_are_not_uploaded() -> anyhow::Result<()> {
             rest.iter().all(|m| !matches!(m, Wire::Piece { .. })),
             "cancelled blocks were sent: {rest:?}"
         );
-        assert_eq!(uploaded(&seed), 2 * BLOCK as u64);
+        expect_uploaded(&seed, 2 * BLOCK as u64).await?;
 
         // Asking again for a block that was cancelled works.
         peer.request(0, BLOCK, BLOCK).await?;
         let again = peer.expect_pieces(1, Duration::from_secs(10)).await?;
         assert_eq!((again[0].0, again[0].1), (0, BLOCK));
-        assert_eq!(uploaded(&seed), 3 * BLOCK as u64);
+        expect_uploaded(&seed, 3 * BLOCK as u64).await?;
         Ok(())
     })
     .await

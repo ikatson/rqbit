@@ -171,14 +171,15 @@ impl PeerStates {
         self.session_stats.seeder_flag_changed(seeder);
     }
 
-    pub fn mark_peer_connecting(&self, h: PeerHandle) -> crate::Result<(PeerRx, PeerTx)> {
-        let rx = self
-            .with_peer_mut(h, "mark_peer_connecting", |peer| {
-                peer.idle_to_connecting(self)
-                    .ok_or(Error::BugInvalidPeerState)
-            })
-            .ok_or(Error::BugPeerNotFound)??;
-        Ok(rx)
+    /// Starts dialing a queued peer. `None` if it is not idle anymore: an address may wait in the
+    /// dial queue while an incoming connection from it (uTP connects from the listening port, so
+    /// it is the same address) makes it live, and it may be queued again after that connection
+    /// ended. Such a stale queue entry is not dialed.
+    pub fn mark_peer_connecting(&self, h: PeerHandle) -> crate::Result<Option<(PeerRx, PeerTx)>> {
+        self.with_peer_mut(h, "mark_peer_connecting", |peer| {
+            peer.idle_to_connecting(self)
+        })
+        .ok_or(Error::BugPeerNotFound)
     }
 
     pub fn reset_peer_backoff(&self, handle: PeerHandle) {
@@ -287,6 +288,15 @@ mod tests {
 
         peers.drop_peer(addr).unwrap();
         assert_eq!(live_seeders(&peers), (0, 0));
+    }
+
+    #[test]
+    fn queued_peer_made_live_by_an_incoming_connection_is_not_dialed() {
+        let peers = make_peer_states();
+        // Queued for dialing, then it connects to us before the queue gets to it.
+        let (addr, _rx) = add_live_peer(&peers, "127.0.0.1:1234");
+        assert!(peers.mark_peer_connecting(addr).unwrap().is_none());
+        assert!(peers.with_peer(addr, |p| p.get_live().is_some()).unwrap());
     }
 
     #[test]
