@@ -97,6 +97,7 @@ dashmap = "6"
 data-encoding = "2"
 directories = "6"
 encoding_rs = "0.8"
+ed25519-dalek = { version = "3", default-features = false }
 futures = "0.3"
 gethostname = "1"
 governor = "0.10"

@@ -1,4 +1,5 @@
 mod bep42;
+mod bep44;
 mod bprotocol;
 mod dht;
 mod error;
@@ -13,6 +14,10 @@ use std::time::Duration;
 pub use error::{Error, Result};
 
 pub use crate::bep42::{generate_node_id, is_local_address, is_valid_node_id};
+pub use crate::bep44::{
+    MAX_SALT_SIZE, MAX_VALUE_SIZE, MutableItem, immutable_target, mutable_target,
+    public_key as ed25519_public_key,
+};
 pub use crate::dht::DhtStats;
 pub use crate::dht::{DhtConfig, DhtState, RequestPeersStream};
 pub use librqbit_core::hash_id::Id20;

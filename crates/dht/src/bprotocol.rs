@@ -339,6 +339,18 @@ pub struct Response<BufT: ByteBufT> {
     pub nodes6: Option<CompactNodeInfo<BufT, SocketAddrV6>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<BufT>,
+    /// BEP 44 `get`: the stored value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub v: Option<RawBencode<BufT>>,
+    /// BEP 44 `get` of a mutable item: the public key of its owner.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub k: Option<FixedBytes<32>>,
+    /// BEP 44 `get` of a mutable item: the ed25519 signature over salt, `seq` and `v`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sig: Option<FixedBytes<64>>,
+    /// BEP 44 `get` of a mutable item: its sequence number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -361,6 +373,115 @@ pub struct AnnouncePeer<BufT> {
     pub info_hash: Id20,
     pub port: u16,
     pub token: BufT,
+}
+
+/// A bencoded value kept as the exact bytes it came in (or was created) as: the BEP 44 `v`.
+/// The target of an immutable item is the SHA-1 of these bytes and the signature of a mutable
+/// item covers them, so they are never re-serialized from a parsed value.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct RawBencode<BufT>(pub BufT);
+
+impl<BufT: AsRef<[u8]>> Serialize for RawBencode<BufT> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        bencode::raw_value::RawValue(self.0.as_ref()).serialize(serializer)
+    }
+}
+
+impl<'de, BufT: Deserialize<'de>> Deserialize<'de> for RawBencode<BufT> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // The value itself is only walked (and so checked to be valid bencode); what we keep
+        // are the bytes it spans.
+        let raw = bencode::WithRawBytes::<IgnoredAny, BufT>::deserialize(deserializer)?;
+        Ok(RawBencode(raw.raw_bytes))
+    }
+}
+
+/// A byte string of exactly `N` bytes (BEP 44 `k` and `sig`). Any other length fails to decode.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FixedBytes<const N: usize>(pub [u8; N]);
+
+impl<const N: usize> core::fmt::Debug for FixedBytes<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for b in self.0 {
+            write!(f, "{b:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl<const N: usize> Serialize for FixedBytes<N> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de, const N: usize> Deserialize<'de> for FixedBytes<N> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct V<const N: usize>;
+        impl<const N: usize> serde::de::Visitor<'_> for V<N> {
+            type Value = FixedBytes<N>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "a byte string of {N} bytes")
+            }
+
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                <[u8; N]>::try_from(v)
+                    .map(FixedBytes)
+                    .map_err(|_| E::invalid_length(v.len(), &self))
+            }
+        }
+        deserializer.deserialize_bytes(V::<N>)
+    }
+}
+
+/// BEP 44 `get`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetRequest {
+    pub id: Id20,
+    pub target: Id20,
+    /// Only send the value of a mutable item when its sequence number is greater than this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub want: Option<Want>,
+}
+
+/// BEP 44 `put`. `k`, `sig` and `seq` together make it a mutable put.
+///
+/// The sizes of `v` and `salt` are not limited here (only by the datagram) but by the code that
+/// answers the query, because BEP 44 has error codes for them (205, 207): rejecting them here
+/// would drop the query without an answer.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PutRequest<BufT: ByteBufT> {
+    pub id: Id20,
+    pub token: BufT,
+    pub v: RawBencode<BufT>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub k: Option<FixedBytes<32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sig: Option<FixedBytes<64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub salt: Option<BufT>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cas: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -390,6 +511,8 @@ pub enum MessageKind<BufT: ByteBufT> {
     Response(Response<BufT>),
     PingRequest(PingRequest),
     AnnouncePeer(AnnouncePeer<BufT>),
+    GetRequest(GetRequest),
+    PutRequest(PutRequest<BufT>),
 }
 
 impl<BufT: ByteBufT> core::fmt::Debug for MessageKind<BufT> {
@@ -401,6 +524,8 @@ impl<BufT: ByteBufT> core::fmt::Debug for MessageKind<BufT> {
             Self::Response(r) => write!(f, "{r:?}"),
             Self::PingRequest(r) => write!(f, "{r:?}"),
             Self::AnnouncePeer(r) => write!(f, "{r:?}"),
+            Self::GetRequest(r) => write!(f, "{r:?}"),
+            Self::PutRequest(r) => write!(f, "{r:?}"),
         }
     }
 }
@@ -492,6 +617,32 @@ pub fn serialize_message<'a, W: Write, BufT: ByteBufT + From<&'a [u8]>>(
             };
             Ok(bencode::bencode_serialize_to_writer(msg, writer)?)
         }
+        MessageKind::GetRequest(req) => {
+            let msg: RawMessage<BufT, _, ()> = RawMessage {
+                message_type: MessageType::Request,
+                transaction_id,
+                error: None,
+                response: None,
+                method_name: Some(BufT::from(b"get")),
+                arguments: Some(req),
+                ip,
+                version,
+            };
+            Ok(bencode::bencode_serialize_to_writer(msg, writer)?)
+        }
+        MessageKind::PutRequest(req) => {
+            let msg: RawMessage<BufT, _, ()> = RawMessage {
+                message_type: MessageType::Request,
+                transaction_id,
+                error: None,
+                response: None,
+                method_name: Some(BufT::from(b"put")),
+                arguments: Some(req),
+                ip,
+                version,
+            };
+            Ok(bencode::bencode_serialize_to_writer(msg, writer)?)
+        }
     }
 }
 
@@ -543,6 +694,32 @@ where
                         kind: MessageKind::AnnouncePeer(de.arguments.unwrap()),
                     })
                 }
+                b"get" => {
+                    let de: RawMessage<BufT, GetRequest> =
+                        bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
+                    let req = de
+                        .arguments
+                        .ok_or_else(|| anyhow::anyhow!("get without arguments"))?;
+                    Ok(Message {
+                        transaction_id: de.transaction_id,
+                        version: de.version,
+                        ip: de.ip.map(|c| c.0),
+                        kind: MessageKind::GetRequest(req),
+                    })
+                }
+                b"put" => {
+                    let de: RawMessage<BufT, PutRequest<BufT>> =
+                        bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
+                    let req = de
+                        .arguments
+                        .ok_or_else(|| anyhow::anyhow!("put without arguments"))?;
+                    Ok(Message {
+                        transaction_id: de.transaction_id,
+                        version: de.version,
+                        ip: de.ip.map(|c| c.0),
+                        kind: MessageKind::PutRequest(req),
+                    })
+                }
                 other => anyhow::bail!("unsupported method {:?}", ByteBuf(other)),
             },
             _ => anyhow::bail!(
@@ -555,11 +732,23 @@ where
             (None, _, Some(_), None) => {
                 let de: RawMessage<BufT, IgnoredAny, Response<BufT>> =
                     bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
+                let response = de
+                    .response
+                    .ok_or_else(|| anyhow::anyhow!("response without \"r\""))?;
+                if let Some(v) = &response.v
+                    && v.0.as_ref().len() > crate::bep44::MAX_VALUE_SIZE
+                {
+                    anyhow::bail!(
+                        "\"v\" of {} bytes is over the BEP 44 limit of {}",
+                        v.0.as_ref().len(),
+                        crate::bep44::MAX_VALUE_SIZE
+                    );
+                }
                 Ok(Message {
                     transaction_id: de.transaction_id,
                     version: de.version,
                     ip: de.ip.map(|c| c.0),
-                    kind: MessageKind::Response(de.response.unwrap()),
+                    kind: MessageKind::Response(response),
                 })
             }
             _ => anyhow::bail!(

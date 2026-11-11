@@ -13,15 +13,18 @@ use std::{
 use crate::{
     Error, INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
     bep42::{self, ExternalIpVoter},
+    bep44::{self, ItemStore, MutableItem, StoredView},
     bprotocol::{
         self, AnnouncePeer, CompactNodeInfo, CompactNodeInfoOwned, ErrorDescription,
-        FindNodeRequest, GetPeersRequest, Message, MessageKind, Node, PingRequest, Response, Want,
+        FindNodeRequest, FixedBytes, GetPeersRequest, GetRequest, Message, MessageKind, Node,
+        PingRequest, PutRequest, RawBencode, Response, Want,
     },
     peer_store::PeerStore,
     routing_table::{InsertResult, NodeStatus, RoutingTable},
 };
 use backon::{ExponentialBuilder, Retryable};
 use bencode::ByteBufOwned;
+use bytes::Bytes;
 use dashmap::DashMap;
 use futures::{
     FutureExt, Stream, StreamExt, TryFutureExt, future::BoxFuture, stream::FuturesUnordered,
@@ -63,6 +66,8 @@ pub struct DhtStats {
     pub external_ip_v4: Option<Ipv4Addr>,
     /// Our external IPv6 address, as the DHT nodes we talk to agree on (BEP 42).
     pub external_ip_v6: Option<Ipv6Addr>,
+    /// How many BEP 44 items other nodes have stored with us.
+    pub stored_items: usize,
 }
 
 /// Our node ids. BEP 42 ties a node id to the external address of the node, and we have one
@@ -298,7 +303,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
         target: Id20,
         addrs: impl Iterator<Item = SocketAddr>,
     ) -> crate::Result<()> {
-        let (node_tx, mut node_rx) = unbounded_channel();
+        let (node_tx, node_rx) = unbounded_channel();
         let req = RecursiveRequest {
             max_depth: 4,
             info_hash: target,
@@ -310,9 +315,22 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
             node_tx,
             callbacks: RecursiveRequestCallbacksFindNodes {},
         };
+        req.run_to_completion(node_rx, addrs.map(|addr| (None, addr)))
+            .await
+    }
+}
 
+impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
+    /// Queries `seeds`, then every node they (and the nodes after them) point to, until no node
+    /// is left to ask.
+    async fn run_to_completion(
+        &self,
+        mut node_rx: UnboundedReceiver<(Option<Id20>, SocketAddr, usize)>,
+        seeds: impl Iterator<Item = (Option<Id20>, SocketAddr)>,
+    ) -> crate::Result<()> {
+        let target = self.info_hash;
         let request_one = |id, addr, depth| {
-            req.request_one(id, addr, depth)
+            self.request_one(id, addr, depth)
                 .map_err(|e| {
                     debug!("error: {e:#}");
                     e
@@ -327,8 +345,8 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
         let mut futs = FuturesUnordered::new();
 
         let mut initial_addrs = 0;
-        for addr in addrs {
-            futs.push(request_one(None, addr, 0));
+        for (id, addr) in seeds {
+            futs.push(request_one(id, addr, 0));
             initial_addrs += 1;
         }
 
@@ -340,14 +358,15 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
                 biased;
 
                 r = node_rx.recv() => {
-                    let (id, addr, depth) = r.unwrap();
+                    // `self` holds the sender, so the channel never closes while we run.
+                    let Some((id, addr, depth)) = r else { break };
                     futs.push(request_one(id, addr, depth))
                 },
                 f = futs.next() => {
                     let f = match f {
                         Some(f) => f,
                         None => {
-                            // find_node recursion finished.
+                            // The recursion finished.
                             break;
                         }
                     };
@@ -367,6 +386,153 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
         );
         Ok(())
     }
+}
+
+/// How many of the closest nodes that gave us a write token a BEP 44 item is put to.
+const PUT_TARGETS: usize = 8;
+/// How long a BEP 44 lookup may take. When it runs out, what was found so far is used.
+const ITEM_LOOKUP_DEADLINE: Duration = Duration::from_secs(30);
+
+/// What a BEP 44 `get` lookup is after, which tells how to check the answers.
+enum ItemQuery {
+    Immutable,
+    Mutable { public_key: [u8; 32], salt: Bytes },
+}
+
+/// A node that answered a `get` with a write token: somewhere to `put` the item.
+struct PutTarget {
+    distance: Id20,
+    addr: SocketAddr,
+    token: ByteBufOwned,
+}
+
+#[derive(Default)]
+struct ItemLookupFound {
+    // The closest nodes that gave us a token, closest first, at most `PUT_TARGETS`.
+    put_targets: Vec<PutTarget>,
+    immutable: Option<Bytes>,
+    mutable: Option<MutableItem>,
+}
+
+impl ItemLookupFound {
+    fn add_put_target(&mut self, target: PutTarget) {
+        if self.put_targets.iter().any(|t| t.addr == target.addr) {
+            return;
+        }
+        self.put_targets.push(target);
+        self.put_targets.sort_by_key(|t| t.distance);
+        self.put_targets.truncate(PUT_TARGETS);
+    }
+}
+
+/// Collects what the nodes of a BEP 44 `get` lookup answer: write tokens, and the item, checked
+/// against the target (immutable) or the signature (mutable). Answers that do not check out are
+/// ignored.
+struct RecursiveRequestCallbacksGetItem {
+    query: ItemQuery,
+    found: Mutex<ItemLookupFound>,
+}
+
+impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetItem {
+    fn on_request_start(&self, _: &RecursiveRequest<Self>, _: Id20, _: SocketAddr) {}
+
+    fn on_request_end(
+        &self,
+        req: &RecursiveRequest<Self>,
+        _target_node: Id20,
+        addr: SocketAddr,
+        resp: &crate::Result<ResponseOrError>,
+    ) {
+        let Ok(ResponseOrError::Response(resp)) = resp else {
+            return;
+        };
+        let target = req.info_hash;
+        let mut found = self.found.lock();
+        // BEP 42: with enforcement on, a node whose id does not match its address is not a
+        // storage target, as for announces.
+        if let Some(token) = &resp.token
+            && req.dht.node_id_acceptable(&resp.id, addr)
+        {
+            found.add_put_target(PutTarget {
+                distance: resp.id.distance(&target),
+                addr,
+                token: token.clone(),
+            });
+        }
+        let Some(v) = &resp.v else {
+            return;
+        };
+        let value = v.0.0.clone();
+        match &self.query {
+            ItemQuery::Immutable => {
+                if bep44::immutable_target(&value) != target {
+                    debug!(
+                        ?addr,
+                        "ignoring an immutable item that does not hash to its target"
+                    );
+                    return;
+                }
+                found.immutable.get_or_insert(value);
+            }
+            ItemQuery::Mutable { public_key, salt } => {
+                let (Some(k), Some(sig), Some(seq)) = (&resp.k, &resp.sig, resp.seq) else {
+                    debug!(?addr, "ignoring a mutable item without k, sig or seq");
+                    return;
+                };
+                if k.0 != *public_key
+                    || !bep44::verify_mutable(public_key, salt, seq, &value, &sig.0)
+                {
+                    debug!(?addr, "ignoring a mutable item with a bad key or signature");
+                    return;
+                }
+                if found.mutable.as_ref().is_none_or(|m| seq > m.seq) {
+                    found.mutable = Some(MutableItem {
+                        value,
+                        seq,
+                        signature: sig.0,
+                        public_key: *public_key,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// The mutable part of a BEP 44 `put` we send.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SignedMutable {
+    public_key: [u8; 32],
+    signature: [u8; 64],
+    seq: i64,
+    salt: Bytes,
+    cas: Option<i64>,
+}
+
+/// A BEP 44 `put` we send.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PutArgs {
+    token: ByteBufOwned,
+    value: Bytes,
+    mutable: Option<SignedMutable>,
+}
+
+/// Checks a value we are about to put: one bencoded value, small enough for the DHT.
+fn check_item_value(value: &[u8]) -> crate::Result<()> {
+    if value.len() > bep44::MAX_VALUE_SIZE {
+        return Err(Error::InvalidItem("value over 1000 bytes"));
+    }
+    if !bep44::is_single_bencoded_value(value) {
+        return Err(Error::InvalidItem("value is not one bencoded value"));
+    }
+    Ok(())
+}
+
+/// Checks the salt of a mutable item.
+fn check_item_salt(salt: &[u8]) -> crate::Result<()> {
+    if salt.len() > bep44::MAX_SALT_SIZE {
+        return Err(Error::InvalidItem("salt over 64 bytes"));
+    }
+    Ok(())
 }
 
 impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
@@ -502,8 +668,11 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             .filter(|node| addr.is_ipv4() == node.addr.is_ipv4());
 
         let now = now();
+        // Other nodes list us too; asking ourselves is a wasted round trip (and a BEP 44 put
+        // to ourselves).
+        let ours = *self.dht.ids.read();
 
-        for node in node_it {
+        for node in node_it.filter(|n| n.id != ours.v4 && n.id != ours.v6) {
             let should_request = self.should_request_node(node.id, node.addr, depth, now);
             trace!(
                 "should_request={}, id={:?}, addr={}, depth={}/{}",
@@ -631,6 +800,8 @@ pub struct DhtState {
     cancellation_token: CancellationToken,
 
     pub(crate) peer_store: PeerStore,
+    // BEP 44 items other nodes put to us.
+    items: ItemStore,
 }
 
 impl DhtState {
@@ -668,6 +839,7 @@ impl DhtState {
             enforce_node_id: AtomicBool::new(enforce_node_id),
             rate_limiter: make_rate_limiter(),
             peer_store,
+            items: ItemStore::default(),
             cancellation_token,
         }
     }
@@ -877,6 +1049,47 @@ impl DhtState {
                 version: None,
                 ip: None,
             },
+            Request::Get(target) => Message {
+                transaction_id: ByteBufOwned::from(transaction_id_buf.as_ref()),
+                version: None,
+                ip: None,
+                kind: MessageKind::GetRequest(GetRequest {
+                    id,
+                    target,
+                    seq: None,
+                    want,
+                }),
+            },
+            Request::Put(args) => {
+                let PutArgs {
+                    token,
+                    value,
+                    mutable,
+                } = *args;
+                let mut put = PutRequest {
+                    id,
+                    token,
+                    v: RawBencode(ByteBufOwned::from(value)),
+                    k: None,
+                    sig: None,
+                    seq: None,
+                    salt: None,
+                    cas: None,
+                };
+                if let Some(m) = mutable {
+                    put.k = Some(FixedBytes(m.public_key));
+                    put.sig = Some(FixedBytes(m.signature));
+                    put.seq = Some(m.seq);
+                    put.salt = (!m.salt.is_empty()).then(|| ByteBufOwned::from(m.salt));
+                    put.cas = m.cas;
+                }
+                Message {
+                    transaction_id: ByteBufOwned::from(transaction_id_buf.as_ref()),
+                    version: None,
+                    ip: None,
+                    kind: MessageKind::PutRequest(put),
+                }
+            }
         };
         (transaction_id, message)
     }
@@ -973,7 +1186,7 @@ impl DhtState {
 
                 let response_or_error = match msg.kind {
                     MessageKind::Error(e) => ResponseOrError::Error(e),
-                    MessageKind::Response(r) => ResponseOrError::Response(r),
+                    MessageKind::Response(r) => ResponseOrError::Response(Box::new(r)),
                     _ => unreachable!(),
                 };
                 match request.done.send(Ok(response_or_error)) {
@@ -1063,6 +1276,7 @@ impl DhtState {
                         token: Some(ByteBufOwned::from(
                             &self.peer_store.gen_token_for(req.id, addr)[..],
                         )),
+                        ..Default::default()
                     }),
                 };
                 self.worker_sender
@@ -1104,8 +1318,289 @@ impl DhtState {
                     .ok_or(Error::DhtDead)?;
                 Ok(())
             }
+            MessageKind::GetRequest(req) => {
+                let want = req
+                    .want
+                    .unwrap_or(if addr.is_ipv6() { Want::V6 } else { Want::V4 });
+                let (nodes, nodes6) = self.generate_compact_nodes_both(req.target, want);
+                self.get_table_for_addr(addr)
+                    .write()
+                    .mark_last_query(&req.id, now());
+                let mut response = bprotocol::Response {
+                    id: self.id_for(addr),
+                    nodes,
+                    nodes6,
+                    token: Some(ByteBufOwned::from(
+                        &self.peer_store.gen_token_for(req.id, addr)[..],
+                    )),
+                    ..Default::default()
+                };
+                match self.items.get(&req.target, now()) {
+                    Some(StoredView::Immutable(value)) => {
+                        response.v = Some(RawBencode(ByteBufOwned::from(value)));
+                    }
+                    Some(StoredView::Mutable(item)) => {
+                        response.k = Some(FixedBytes(item.public_key));
+                        response.sig = Some(FixedBytes(item.signature));
+                        response.seq = Some(item.seq);
+                        // The requester already has everything up to its "seq".
+                        if req.seq.is_none_or(|seq| item.seq > seq) {
+                            response.v = Some(RawBencode(ByteBufOwned::from(item.value)));
+                        }
+                    }
+                    None => {}
+                }
+                self.reply(
+                    addr,
+                    msg.transaction_id.clone(),
+                    MessageKind::Response(response),
+                )
+            }
+            MessageKind::PutRequest(req) => {
+                self.get_table_for_addr(addr)
+                    .write()
+                    .mark_last_query(&req.id, now());
+                let kind = match self.store_item(req, addr) {
+                    Ok(()) => MessageKind::Response(bprotocol::Response {
+                        id: self.id_for(addr),
+                        ..Default::default()
+                    }),
+                    Err(e) => {
+                        debug!(?addr, code = e.code(), "refusing put: {}", e.message());
+                        MessageKind::Error(ErrorDescription {
+                            code: e.code(),
+                            description: ByteBufOwned::from(e.message().as_bytes()),
+                        })
+                    }
+                };
+                self.reply(addr, msg.transaction_id.clone(), kind)
+            }
             _ => unreachable!(),
         }
+    }
+
+    /// Answers the query with `transaction_id` from `addr`.
+    fn reply(
+        &self,
+        addr: SocketAddr,
+        transaction_id: ByteBufOwned,
+        kind: MessageKind<ByteBufOwned>,
+    ) -> crate::Result<()> {
+        let message = Message {
+            transaction_id,
+            version: None,
+            ip: Some(addr),
+            kind,
+        };
+        self.worker_sender
+            .send(WorkerSendRequest {
+                our_tid: None,
+                message,
+                addr,
+            })
+            .ok()
+            .ok_or(Error::DhtDead)
+    }
+
+    /// Checks a BEP 44 `put` from `addr` and stores the item. The token is checked first: it is
+    /// cheap, and it stops anyone who did not `get` from us first from making us verify
+    /// signatures.
+    fn store_item(
+        &self,
+        req: &PutRequest<ByteBufOwned>,
+        addr: SocketAddr,
+    ) -> Result<(), bep44::PutError> {
+        if !self
+            .peer_store
+            .token_is_valid(req.token.as_ref(), &req.id, addr)
+        {
+            return Err(bep44::PutError::Protocol("invalid token"));
+        }
+        let item = bep44::check_put(req)?;
+        let ids = *self.ids.read();
+        self.items.put(item, [ids.v4, ids.v6], now())
+    }
+
+    /// Our known nodes closest to `target`, from both routing tables: where a lookup starts.
+    fn closest_known_nodes(&self, target: Id20) -> Vec<(Option<Id20>, SocketAddr)> {
+        let now = now();
+        [&self.routing_table_v4, &self.routing_table_v6]
+            .into_iter()
+            .flat_map(|table| {
+                table
+                    .read()
+                    .sorted_by_distance_from(target, now)
+                    .iter()
+                    .take(PUT_TARGETS)
+                    .map(|n| (Some(n.id()), n.addr()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Runs a BEP 44 `get` lookup for `target` through the DHT, both address families at once,
+    /// and returns the item found and the closest nodes that gave us a write token.
+    async fn item_lookup(
+        self: &Arc<Self>,
+        target: Id20,
+        query: ItemQuery,
+    ) -> crate::Result<ItemLookupFound> {
+        let seeds = self.closest_known_nodes(target);
+        if seeds.is_empty() {
+            return Err(Error::NoSuccessfulLookups { errors: 0 });
+        }
+        let (node_tx, node_rx) = unbounded_channel();
+        let req = RecursiveRequest {
+            max_depth: 4,
+            info_hash: target,
+            request: Request::Get(target),
+            dht: self.clone(),
+            useful_nodes_limit: 32,
+            useful_nodes: RwLock::new(Vec::new()),
+            peer_tx: unbounded_channel().0,
+            node_tx,
+            callbacks: RecursiveRequestCallbacksGetItem {
+                query,
+                found: Mutex::new(ItemLookupFound {
+                    // What we store ourselves counts: we are one of the nodes closest to it.
+                    // It was checked when it was put to us.
+                    mutable: match self.items.get(&target, now()) {
+                        Some(StoredView::Mutable(item)) => Some(item),
+                        _ => None,
+                    },
+                    ..Default::default()
+                }),
+            },
+        };
+        let run = req.run_to_completion(node_rx, seeds.into_iter());
+        match tokio::time::timeout(ITEM_LOOKUP_DEADLINE, run)
+            .instrument(debug_span!("dht_get", target = ?target))
+            .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => debug!(?target, "lookup deadline reached, using what was found"),
+        }
+        Ok(std::mem::take(&mut *req.callbacks.found.lock()))
+    }
+
+    /// Puts an item to `targets`, and returns how many of them stored it. Errors when none
+    /// did, with what the nodes answered.
+    async fn put_item(
+        &self,
+        targets: Vec<PutTarget>,
+        value: Bytes,
+        mutable: Option<SignedMutable>,
+    ) -> crate::Result<usize> {
+        let asked = targets.len();
+        let answers = futures::future::join_all(targets.into_iter().map(|t| {
+            let args = PutArgs {
+                token: t.token,
+                value: value.clone(),
+                mutable: mutable.clone(),
+            };
+            self.request(Request::Put(Box::new(args)), t.addr)
+        }))
+        .await;
+        let mut stored = 0;
+        let mut rejections = Vec::new();
+        for answer in answers {
+            match answer {
+                Ok(ResponseOrError::Response(_)) => stored += 1,
+                Ok(ResponseOrError::Error(e)) => rejections.push((
+                    e.code,
+                    String::from_utf8_lossy(e.description.as_ref()).into_owned(),
+                )),
+                Err(e) => debug!("put failed: {e:#}"),
+            }
+        }
+        if stored == 0 {
+            return Err(Error::ItemNotStored { asked, rejections });
+        }
+        Ok(stored)
+    }
+
+    /// Looks up the immutable BEP 44 item `target` (the SHA-1 of its bencoded value) and returns
+    /// its value, bencoded, byte for byte as stored. Values that do not hash to `target` are
+    /// ignored. `None` when no node has it.
+    pub async fn get_immutable(self: &Arc<Self>, target: Id20) -> crate::Result<Option<Bytes>> {
+        // An immutable item is the same everywhere, so if it was put to us we are done.
+        if let Some(StoredView::Immutable(value)) = self.items.get(&target, now()) {
+            return Ok(Some(value));
+        }
+        Ok(self
+            .item_lookup(target, ItemQuery::Immutable)
+            .await?
+            .immutable)
+    }
+
+    /// Stores `value` (one bencoded value of at most [`bep44::MAX_VALUE_SIZE`] bytes) as an
+    /// immutable BEP 44 item on the nodes closest to it, and returns its target. Errors when no
+    /// node stored it.
+    pub async fn put_immutable(self: &Arc<Self>, value: Bytes) -> crate::Result<Id20> {
+        check_item_value(&value)?;
+        let target = bep44::immutable_target(&value);
+        let found = self.item_lookup(target, ItemQuery::Immutable).await?;
+        self.put_item(found.put_targets, value, None).await?;
+        Ok(target)
+    }
+
+    /// Looks up the mutable BEP 44 item of `public_key` and `salt` (empty for none) and returns
+    /// the version with the greatest sequence number among those with a valid signature. `None`
+    /// when no node has it.
+    pub async fn get_mutable(
+        self: &Arc<Self>,
+        public_key: [u8; 32],
+        salt: &[u8],
+    ) -> crate::Result<Option<MutableItem>> {
+        check_item_salt(salt)?;
+        let target = bep44::mutable_target(&public_key, salt);
+        let query = ItemQuery::Mutable {
+            public_key,
+            salt: Bytes::copy_from_slice(salt),
+        };
+        Ok(self.item_lookup(target, query).await?.mutable)
+    }
+
+    /// Signs `value` (one bencoded value of at most [`bep44::MAX_VALUE_SIZE`] bytes) with the
+    /// ed25519 key whose 32-byte secret is `signing_key`, and stores it as version `seq` of the
+    /// mutable BEP 44 item of that key and `salt` (empty for none, at most
+    /// [`bep44::MAX_SALT_SIZE`] bytes) on the nodes closest to it. With `cas`, nodes only take it
+    /// if the version they have is `cas`. Errors when no node stored it; nodes that refuse it
+    /// (e.g. because they have a newer version, code 302, or `cas` did not match, code 301) are
+    /// listed in the error.
+    pub async fn put_mutable(
+        self: &Arc<Self>,
+        signing_key: &[u8; 32],
+        salt: &[u8],
+        seq: i64,
+        value: Bytes,
+        cas: Option<i64>,
+    ) -> crate::Result<()> {
+        check_item_value(&value)?;
+        check_item_salt(salt)?;
+        if seq < 0 {
+            return Err(Error::InvalidItem("negative sequence number"));
+        }
+        let public_key = bep44::public_key(signing_key);
+        let salt = Bytes::copy_from_slice(salt);
+        let signature = bep44::sign_mutable(signing_key, &salt, seq, &value);
+        let target = bep44::mutable_target(&public_key, &salt);
+        let query = ItemQuery::Mutable {
+            public_key,
+            salt: salt.clone(),
+        };
+        let found = self.item_lookup(target, query).await?;
+        let mutable = SignedMutable {
+            public_key,
+            signature,
+            seq,
+            salt,
+            cas,
+        };
+        self.put_item(found.put_targets, value, Some(mutable))
+            .await?;
+        Ok(())
     }
 
     pub fn get_stats(&self) -> DhtStats {
@@ -1118,6 +1613,7 @@ impl DhtState {
             routing_table_size_v6: self.routing_table_v6.read().len(),
             external_ip_v4: bep42::adopted_v4(&self.ip_voter_v4.lock()),
             external_ip_v6: bep42::adopted_v6(&self.ip_voter_v6.lock()),
+            stored_items: self.items.len(),
         }
     }
 }
@@ -1132,10 +1628,15 @@ enum Request {
         port: u16,
     },
     Ping,
+    /// BEP 44 `get` of the item with this target.
+    Get(Id20),
+    /// BEP 44 `put`. Boxed: it is far bigger than the other requests.
+    Put(Box<PutArgs>),
 }
 
 enum ResponseOrError {
-    Response(Response<ByteBufOwned>),
+    // Boxed: with the BEP 44 fields a response is several times bigger than an error.
+    Response(Box<Response<ByteBufOwned>>),
     Error(ErrorDescription<ByteBufOwned>),
 }
 
@@ -1615,17 +2116,20 @@ mod tests {
     use std::{
         collections::HashSet,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+        str::FromStr,
+        sync::Arc,
         time::Duration,
     };
 
     use bencode::ByteBufOwned;
+    use bytes::Bytes;
     use librqbit_core::hash_id::Id20;
     use tokio::net::UdpSocket;
 
-    use super::{DhtConfig, DhtState};
+    use super::{DhtConfig, DhtState, PutArgs, Request, ResponseOrError, SignedMutable};
     use crate::{
-        Dht, bep42,
-        bprotocol::{self, MessageKind},
+        Dht, bep42, bep44,
+        bprotocol::{self, FixedBytes, MessageKind, RawBencode},
     };
 
     async fn start_dht(bootstrap_addr: SocketAddr) -> Dht {
@@ -1840,5 +2344,218 @@ mod tests {
 
         dht.set_enforce_node_id(false);
         assert_eq!(handed_out(&dht), HashSet::from([valid, invalid, local]));
+    }
+
+    /// `n` DHT nodes on loopback that all know each other. They bootstrap from a socket that
+    /// never answers, so their routing tables hold exactly the nodes added here.
+    async fn start_mesh(n: usize) -> (Vec<Dht>, UdpSocket) {
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let mut nodes = Vec::new();
+        for _ in 0..n {
+            nodes.push(start_dht(silent.local_addr().unwrap()).await);
+        }
+        for a in &nodes {
+            for b in &nodes {
+                if !Arc::ptr_eq(a, b) {
+                    let id = b.get_stats().id;
+                    a.routing_table_v4.write().add_node(id, b.listen_addr());
+                }
+            }
+        }
+        (nodes, silent)
+    }
+
+    fn rejection_codes(e: crate::Error) -> HashSet<i32> {
+        match e {
+            crate::Error::ItemNotStored { rejections, .. } => {
+                rejections.into_iter().map(|(code, _)| code).collect()
+            }
+            other => panic!("expected ItemNotStored, got {other:#}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bep44_immutable_put_get_across_nodes() {
+        let (nodes, _silent) = start_mesh(5).await;
+        let value = Bytes::from_static(b"12:Hello World!");
+        let target = nodes[0].put_immutable(value.clone()).await.unwrap();
+        assert_eq!(
+            target,
+            Id20::from_str("e5f96f6f38320f0f33959cb4d3d656452117aadb").unwrap()
+        );
+        // Node 3 has a copy; node 0 does not keep what it puts, so it has to ask the others.
+        assert_eq!(
+            nodes[3].get_immutable(target).await.unwrap(),
+            Some(value.clone())
+        );
+        assert_eq!(nodes[0].get_immutable(target).await.unwrap(), Some(value));
+        assert!(
+            nodes
+                .iter()
+                .skip(1)
+                .all(|n| n.get_stats().stored_items == 1)
+        );
+        assert_eq!(nodes[0].get_stats().stored_items, 0);
+
+        // Nobody has this one.
+        let missing = bep44::immutable_target(b"3:abc");
+        assert_eq!(nodes[2].get_immutable(missing).await.unwrap(), None);
+
+        // What we refuse before sending anything.
+        assert!(matches!(
+            nodes[0]
+                .put_immutable(Bytes::from_static(b"3:abc3:def"))
+                .await,
+            Err(crate::Error::InvalidItem(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_bep44_mutable_put_get_across_nodes() {
+        let (nodes, _silent) = start_mesh(5).await;
+        let key = [7u8; 32];
+        let public_key = bep44::public_key(&key);
+        let salt = b"foobar";
+
+        nodes[0]
+            .put_mutable(&key, salt, 1, Bytes::from_static(b"5:first"), None)
+            .await
+            .unwrap();
+        let got = nodes[2]
+            .get_mutable(public_key, salt)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((got.seq, &got.value[..]), (1, &b"5:first"[..]));
+        assert_eq!(got.public_key, public_key);
+        // Another salt is another item.
+        assert_eq!(nodes[2].get_mutable(public_key, b"").await.unwrap(), None);
+
+        // A newer version replaces it, if what the nodes have is the version "cas" names. (Put
+        // from node 0 again: node 1 would leave its own copy of version 1 behind.)
+        nodes[0]
+            .put_mutable(&key, salt, 2, Bytes::from_static(b"6:second"), Some(1))
+            .await
+            .unwrap();
+        let got = nodes[4]
+            .get_mutable(public_key, salt)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((got.seq, &got.value[..]), (2, &b"6:second"[..]));
+
+        // An older one is refused.
+        let e = nodes[0]
+            .put_mutable(&key, salt, 1, Bytes::from_static(b"5:older"), None)
+            .await
+            .unwrap_err();
+        assert_eq!(rejection_codes(e), HashSet::from([302]));
+
+        // So is one whose "cas" is not the version the nodes have.
+        let e = nodes[0]
+            .put_mutable(&key, salt, 3, Bytes::from_static(b"5:third"), Some(1))
+            .await
+            .unwrap_err();
+        assert_eq!(rejection_codes(e), HashSet::from([301]));
+
+        let got = nodes[3]
+            .get_mutable(public_key, salt)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((got.seq, &got.value[..]), (2, &b"6:second"[..]));
+    }
+
+    #[tokio::test]
+    async fn test_bep44_forged_signature_is_refused_and_ignored() {
+        let (nodes, _silent) = start_mesh(3).await;
+        let key = [9u8; 32];
+        let public_key = bep44::public_key(&key);
+        let target = bep44::mutable_target(&public_key, b"");
+        nodes[0]
+            .put_mutable(&key, b"", 2, Bytes::from_static(b"4:real"), None)
+            .await
+            .unwrap();
+
+        // A node refuses a put whose signature does not verify (206).
+        let victim = nodes[1].listen_addr();
+        let token = match nodes[0]
+            .request(Request::Get(target), victim)
+            .await
+            .unwrap()
+        {
+            ResponseOrError::Response(r) => r.token.unwrap(),
+            ResponseOrError::Error(e) => panic!("get failed: {e:?}"),
+        };
+        let value = Bytes::from_static(b"6:forged");
+        let mut signature = bep44::sign_mutable(&key, b"", 5, &value);
+        signature[0] ^= 1;
+        let forged = PutArgs {
+            token,
+            value: value.clone(),
+            mutable: Some(SignedMutable {
+                public_key,
+                signature,
+                seq: 5,
+                salt: Bytes::new(),
+                cas: None,
+            }),
+        };
+        match nodes[0]
+            .request(Request::Put(Box::new(forged)), victim)
+            .await
+            .unwrap()
+        {
+            ResponseOrError::Error(e) => assert_eq!(e.code, 206),
+            ResponseOrError::Response(r) => panic!("forged put accepted: {r:?}"),
+        }
+
+        // A node that answers `get` with a newer but forged version is ignored by the lookup.
+        let liar = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let liar_addr = liar.local_addr().unwrap();
+        let liar_id = Id20::new([0x42; 20]);
+        let liar_task = tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            loop {
+                let Ok((len, from)) = liar.recv_from(&mut buf).await else {
+                    return;
+                };
+                let Ok(msg) = bprotocol::deserialize_message::<ByteBufOwned>(&buf[..len]) else {
+                    continue;
+                };
+                if !matches!(msg.kind, MessageKind::GetRequest(_)) {
+                    continue;
+                }
+                let response = bprotocol::Response {
+                    id: liar_id,
+                    v: Some(RawBencode(ByteBufOwned::from(value.clone()))),
+                    k: Some(FixedBytes(public_key)),
+                    sig: Some(FixedBytes(signature)),
+                    seq: Some(5),
+                    ..Default::default()
+                };
+                let mut out = Vec::new();
+                bprotocol::serialize_message(
+                    &mut out,
+                    msg.transaction_id,
+                    None,
+                    Some(from),
+                    MessageKind::Response(response),
+                )
+                .unwrap();
+                liar.send_to(&out, from).await.unwrap();
+            }
+        });
+        nodes[2]
+            .routing_table_v4
+            .write()
+            .add_node(liar_id, liar_addr);
+        let got = nodes[2]
+            .get_mutable(public_key, b"")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((got.seq, &got.value[..]), (2, &b"4:real"[..]));
+        liar_task.abort();
     }
 }
