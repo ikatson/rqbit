@@ -451,6 +451,10 @@ impl TorrentStorage for Instrumented {
     fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
         self.inner.finish_move_storage(commit)
     }
+
+    fn forget_cached_data(&self) -> anyhow::Result<()> {
+        self.inner.forget_cached_data()
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
