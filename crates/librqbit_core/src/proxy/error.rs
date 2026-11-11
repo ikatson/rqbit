@@ -43,6 +43,9 @@ pub enum ProxyError {
     /// association is being rebuilt).
     #[error("no UDP association with the proxy: {0}")]
     UdpAssociationDown(String),
+    /// The UDP association was shut down (its owner was dropped or cancelled).
+    #[error("the UDP association with the proxy was shut down")]
+    UdpAssociationShutDown,
     /// A domain name longer than 255 bytes can't be sent to a SOCKS5 proxy.
     #[error("the domain name is too long for SOCKS5")]
     DomainTooLong,

@@ -322,11 +322,16 @@ async fn read_until_nul<S: AsyncRead + Unpin>(s: &mut S) -> R<Vec<u8>> {
     }
 }
 
-/// Resolves a requested destination; the proxy only ever connects to loopback in tests.
+/// Resolves a requested destination; the proxy only ever connects to loopback in tests, where
+/// every fake server listens on IPv4, so an IPv4 address is preferred (`localhost` may resolve
+/// to `::1` first).
 async fn resolve(target: &str) -> R<SocketAddr> {
-    tokio::net::lookup_host(target)
-        .await?
-        .next()
+    let addrs: Vec<SocketAddr> = tokio::net::lookup_host(target).await?.collect();
+    addrs
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or_else(|| addrs.first())
+        .copied()
         .ok_or_else(|| bad("host not found"))
 }
 

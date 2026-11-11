@@ -18,7 +18,7 @@ test-util = []
 
 [dependencies]
 tracing.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
 hex.workspace = true
 anyhow.workspace = true
 url.workspace = true

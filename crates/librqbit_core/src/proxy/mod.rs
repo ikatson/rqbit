@@ -21,9 +21,13 @@ use std::{fmt, net::SocketAddr, str::FromStr};
 
 mod error;
 mod http_connect;
+mod socks5_udp;
 
 pub use error::ProxyError;
 pub use http_connect::{HttpTunnel, http_connect, http_connect_with_stream};
+pub use socks5_udp::{
+    MAX_UDP_PAYLOAD, SOCKS5_UDP_HEADER_MAX, SOCKS5_UDP_HEADER_MIN, Socks5UdpAssociation,
+};
 
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
