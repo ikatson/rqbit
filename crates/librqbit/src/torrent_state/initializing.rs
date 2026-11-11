@@ -29,6 +29,16 @@ use super::{
     streaming::TorrentStreams,
 };
 
+// What became of the fastresume bitfield stored for the torrent.
+enum Fastresume {
+    // None was stored, or the check ignores it (a recheck, or a torrent that was in error).
+    Missing,
+    // One was stored but couldn't be used: it has the wrong length, or a piece it claims
+    // failed its hash. It was dropped.
+    Broken,
+    Valid(Box<dyn BitV>),
+}
+
 pub struct TorrentStateInitializing {
     pub(crate) files: FileStorage,
     pub(crate) shared: Arc<ManagedTorrentShared>,
@@ -69,8 +79,9 @@ impl TorrentStateInitializing {
         }
     }
 
-    /// Without a valid fastresume bitfield, trust files that all have their expected length
-    /// instead of hashing them ([`crate::AddTorrentOptions::skip_initial_check`]).
+    /// Without a fastresume bitfield, trust files that all have their expected length
+    /// instead of hashing them ([`crate::AddTorrentOptions::skip_initial_check`]). A valid
+    /// bitfield is used instead; a broken one means a full check.
     pub(crate) fn with_skip_check(mut self, skip_check: bool) -> Self {
         self.skip_check = skip_check;
         self
@@ -139,8 +150,10 @@ impl TorrentStateInitializing {
         &self,
         bitv_factory: &dyn BitVFactory,
         have_pieces: Option<Box<dyn BitV>>,
-    ) -> Option<Box<dyn BitV>> {
-        let hp = have_pieces?;
+    ) -> Fastresume {
+        let Some(hp) = have_pieces else {
+            return Fastresume::Missing;
+        };
         let actual = hp.as_bytes().len();
         let expected = self.metadata.lengths().piece_bitfield_bytes();
         if actual != expected {
@@ -149,7 +162,7 @@ impl TorrentStateInitializing {
                 expected,
                 "the bitfield loaded isn't of correct length, ignoring it, will do full check"
             );
-            return None;
+            return Fastresume::Broken;
         }
 
         let is_broken = self
@@ -206,8 +219,15 @@ impl TorrentStateInitializing {
                     })
                     .enumerate()
                 {
-                    if fo.check_piece(piece_id).is_err() {
-                        return true;
+                    // check_piece() answers Ok(false) for a piece whose hash doesn't
+                    // match: that piece is as wrong as one that can't be read.
+                    match fo.check_piece(piece_id) {
+                        Ok(true) => {}
+                        Ok(false) => return true,
+                        Err(e) => {
+                            warn!(id = ?self.shared.id, piece = piece_id.get(), "error reading a piece the bitfield claims: {e:#}");
+                            return true;
+                        }
                     }
 
                     #[allow(clippy::cast_possible_truncation)]
@@ -232,10 +252,10 @@ impl TorrentStateInitializing {
                 warn!(id=?self.shared.id, info_hash = ?self.shared.info_hash, "error clearing bitfield: {e:#}");
             }
             self.checked_bytes.store(0, Ordering::Relaxed);
-            return None;
+            return Fastresume::Broken;
         }
 
-        Some(hp)
+        Fastresume::Valid(hp)
     }
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
@@ -259,7 +279,7 @@ impl TorrentStateInitializing {
                 .context("error loading have_pieces")?
         };
 
-        let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
+        let fastresume = self.validate_fastresume(&*bitv_factory, have_pieces).await;
 
         let selected_pieces = compute_selected_pieces(
             self.metadata.lengths(),
@@ -267,10 +287,22 @@ impl TorrentStateInitializing {
             &self.metadata.file_infos,
         );
 
-        let have_pieces = match have_pieces {
-            Some(h) => h,
-            None => {
-                let trusted = if self.skip_check && !self.previously_errored {
+        let have_pieces = match fastresume {
+            Fastresume::Valid(h) => h,
+            fastresume => {
+                // Lengths are trusted only when nothing is known about the data. A stored
+                // bitfield that the data contradicts says the data changed after it was
+                // written, and a file can change without changing length.
+                let trust_lengths = self.skip_check
+                    && !self.previously_errored
+                    && matches!(fastresume, Fastresume::Missing);
+                if self.skip_check && matches!(fastresume, Fastresume::Broken) {
+                    info!(
+                        id = ?self.shared.id,
+                        "the stored bitfield doesn't match the data, will check it instead of trusting file lengths"
+                    );
+                }
+                let trusted = if trust_lengths {
                     self.shared
                         .spawner
                         .block_in_place_with_semaphore(|| self.trusted_pieces(&selected_pieces))
