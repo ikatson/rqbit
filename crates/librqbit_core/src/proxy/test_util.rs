@@ -9,7 +9,7 @@
 #![allow(clippy::unwrap_used)]
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
 };
@@ -49,6 +49,9 @@ pub struct FakeProxyOptions {
     pub unspecified_relay_addr: bool,
     /// Whether the URL tells the client to let the proxy resolve host names.
     pub remote_dns: bool,
+    /// Whether the SOCKS5 relay gives the source of an answer by name (`ATYP=3`) when the
+    /// client named the destination, instead of giving its address.
+    pub name_sources: bool,
     /// Whether every request is refused.
     pub refuse: bool,
     /// The address the proxy listens on (`127.0.0.1` by default).
@@ -64,6 +67,7 @@ impl FakeProxyOptions {
             udp: true,
             unspecified_relay_addr: false,
             remote_dns: false,
+            name_sources: false,
             refuse: false,
             listen_ip: Ipv4Addr::LOCALHOST.into(),
         }
@@ -503,6 +507,8 @@ async fn serve_udp_association(
     shared.log.lock().associations += 1;
 
     let mut client: Option<SocketAddr> = None;
+    // The destinations the client gave by name, by address.
+    let mut names: HashMap<SocketAddr, String> = HashMap::new();
     let mut buf = vec![0u8; 65536];
     let mut control_buf = [0u8; 64];
     loop {
@@ -530,6 +536,9 @@ async fn serve_udp_association(
                     let Ok(dest) = resolve(&target).await else {
                         continue;
                     };
+                    if target.parse::<SocketAddr>().is_err() {
+                        names.insert(dest, target.clone());
+                    }
                     let payload = d[header_len..].to_vec();
                     let _ = relay.send_to(&payload, dest).await;
                     shared.log.lock().datagrams.push(RelayedDatagram {
@@ -539,7 +548,19 @@ async fn serve_udp_association(
                     });
                 } else {
                     let mut out = vec![0, 0, 0];
-                    out.extend_from_slice(&socks5_addr(from));
+                    let name = names
+                        .get(&from)
+                        .filter(|_| shared.opts.name_sources)
+                        .and_then(|t| t.rsplit_once(':'));
+                    match name {
+                        Some((host, _)) => {
+                            out.push(3);
+                            out.push(u8::try_from(host.len()).map_err(|_| bad("name"))?);
+                            out.extend_from_slice(host.as_bytes());
+                            out.extend_from_slice(&from.port().to_be_bytes());
+                        }
+                        None => out.extend_from_slice(&socks5_addr(from)),
+                    }
                     out.extend_from_slice(d);
                     let _ = relay.send_to(&out, client).await;
                     shared.log.lock().datagrams_to_client += 1;

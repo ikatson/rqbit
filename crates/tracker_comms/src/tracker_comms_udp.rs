@@ -387,10 +387,17 @@ impl UdpTrackerClient {
         }
     }
 
-    async fn recv(&self, buf: &mut [u8]) -> Option<anyhow::Result<(usize, SocketAddr)>> {
+    /// Receives the next response, and its source. Through a proxy, the relay may give the
+    /// source as a host name (`None`): the response is matched by transaction id anyway.
+    async fn recv(&self, buf: &mut [u8]) -> Option<anyhow::Result<(usize, Option<SocketAddr>)>> {
         match &self.state.transport {
-            Transport::Direct(sock) => Some(sock.recv_from(buf).await.map_err(Into::into)),
-            Transport::Socks5(assoc) => match assoc.recv_from(buf).await {
+            Transport::Direct(sock) => Some(
+                sock.recv_from(buf)
+                    .await
+                    .map(|(len, addr)| (len, Some(addr)))
+                    .map_err(Into::into),
+            ),
+            Transport::Socks5(assoc) => match assoc.recv(buf).await {
                 Err(ProxyError::UdpAssociationShutDown) => None,
                 r => Some(r.map_err(Into::into)),
             },
@@ -410,7 +417,11 @@ impl UdpTrackerClient {
                 None => return Ok(()),
             };
 
-            let (tid, response) = match Response::parse(&buf[..len], addr.is_ipv6()) {
+            // The peers in an announce response are IPv6 ones when the tracker was reached
+            // over IPv6 (BEP 15). A source given by name says nothing: take IPv4, by far the
+            // most common.
+            let is_ipv6 = addr.is_some_and(|a| a.is_ipv6());
+            let (tid, response) = match Response::parse(&buf[..len], is_ipv6) {
                 Ok(r) => r,
                 Err(e) => {
                     debug!(?addr, "error parsing UDP response: {e:#}");

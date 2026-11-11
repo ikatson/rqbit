@@ -6,10 +6,18 @@
 //! the answers the same way. The association lives as long as the control connection: when that
 //! drops (or the proxy is down), [`Socks5UdpAssociation`] establishes a new one with an
 //! exponential backoff. In the meantime sending fails; nothing is ever sent directly.
+//!
+//! Nothing is ever written to the control connection, so a proxy host that vanishes without
+//! closing it (power loss, a NAT forgetting the connection) can't be noticed there. The relay is
+//! watched instead: when datagrams keep going out and nothing at all comes back for a while,
+//! the association is taken for dead and rebuilt.
 
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -37,9 +45,26 @@ pub const SOCKS5_UDP_HEADER_MAX: usize = 262;
 const ASSOCIATE_TIMEOUT: Duration = Duration::from_secs(10);
 const MIN_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// The wait after the proxy refused UDP ASSOCIATE or the credentials: asking again soon would
+/// get the same answer.
+const REFUSED_BACKOFF: Duration = Duration::from_secs(300);
 /// An association that lasted this long was healthy: the next attempt starts from
 /// [`MIN_BACKOFF`] again.
 const STABLE_ASSOCIATION: Duration = Duration::from_secs(10);
+/// The same failure is logged as a warning again after this long; repeats in between are
+/// debug messages.
+const WARN_AGAIN_AFTER: Duration = Duration::from_secs(3600);
+/// An association is taken for dead when at least [`SILENT_SENDS`] datagrams went out and
+/// the relay sent nothing back since the first of them, [`SILENT_TIMEOUT`] ago or more.
+const SILENT_SENDS: u32 = 8;
+#[cfg(not(test))]
+const SILENT_TIMEOUT: Duration = Duration::from_secs(60);
+#[cfg(test)]
+const SILENT_TIMEOUT: Duration = Duration::from_millis(500);
+#[cfg(not(test))]
+const SILENCE_CHECK: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const SILENCE_CHECK: Duration = Duration::from_millis(50);
 
 /// One established association.
 #[derive(Debug)]
@@ -50,6 +75,44 @@ struct Association {
     relay: SocketAddr,
     /// Scratch space to put the header in front of a payload.
     send_buf: tokio::sync::Mutex<Vec<u8>>,
+    created: Instant,
+    /// Datagrams sent since the relay last sent one.
+    unanswered: AtomicU32,
+    /// When the first of those went out, in milliseconds since `created`.
+    first_unanswered_ms: AtomicU64,
+}
+
+impl Association {
+    fn new(socket: UdpSocket, relay: SocketAddr) -> Self {
+        Self {
+            socket,
+            relay,
+            send_buf: tokio::sync::Mutex::new(Vec::new()),
+            created: Instant::now(),
+            unanswered: AtomicU32::new(0),
+            first_unanswered_ms: AtomicU64::new(0),
+        }
+    }
+
+    fn sent(&self) {
+        if self.unanswered.fetch_add(1, Ordering::Relaxed) == 0 {
+            let ms = u64::try_from(self.created.elapsed().as_millis()).unwrap_or(u64::MAX);
+            self.first_unanswered_ms.store(ms, Ordering::Relaxed);
+        }
+    }
+
+    fn answered(&self) {
+        self.unanswered.store(0, Ordering::Relaxed);
+    }
+
+    /// Whether the relay looks dead (see [`SILENT_SENDS`]).
+    fn is_silent(&self) -> bool {
+        if self.unanswered.load(Ordering::Relaxed) < SILENT_SENDS {
+            return false;
+        }
+        let first = Duration::from_millis(self.first_unanswered_ms.load(Ordering::Relaxed));
+        self.created.elapsed().saturating_sub(first) >= SILENT_TIMEOUT
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +143,9 @@ struct Inner {
 /// association is kept up, and re-established with backoff whenever it ends. The association
 /// shuts down when this value is dropped or the cancellation token given to
 /// [`new`](Self::new) is cancelled.
+///
+/// Its sockets are not bound to a network device: they follow the routing table, like the
+/// SOCKS TCP connections to the proxy.
 #[derive(Debug)]
 pub struct Socks5UdpAssociation {
     inner: Arc<Inner>,
@@ -150,20 +216,36 @@ impl Socks5UdpAssociation {
             .send_to(&buf, assoc.relay)
             .await
             .map_err(ProxyError::Io)?;
+        assoc.sent();
         Ok(())
     }
 
     /// Receives the next datagram relayed by the proxy into `buf`, and returns its length and
     /// its source.
     ///
+    /// Like [`recv`](Self::recv), but datagrams whose source the relay gave as a host name are
+    /// dropped.
+    pub async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), ProxyError> {
+        loop {
+            match self.recv(buf).await? {
+                (len, Some(source)) => return Ok((len, source)),
+                (_, None) => debug!("dropping a datagram whose source is a host name"),
+            }
+        }
+    }
+
+    /// Receives the next datagram relayed by the proxy into `buf`, and returns its length and
+    /// its source, or `None` when the relay gave the source as a host name (`ATYP=3`, which a
+    /// relay may do for a destination that was given by name).
+    ///
     /// The SOCKS5 header is received into `buf` too, so `buf` should be
     /// [`SOCKS5_UDP_HEADER_MAX`] bytes longer than the largest datagram expected; a longer
     /// datagram is truncated. Datagrams that don't come from the relay, fragmented ones
-    /// (`FRAG != 0`) and ones with a malformed header or a domain name as their source are
-    /// dropped. While there is no association, this waits for one (it doesn't start one: the
-    /// first [`send_to`](Self::send_to) does); it fails only when the association is shut
-    /// down, or when receiving from the local socket fails.
-    pub async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), ProxyError> {
+    /// (`FRAG != 0`) and ones with a malformed header are dropped. While there is no
+    /// association, this waits for one (it doesn't start one: the first
+    /// [`send_to`](Self::send_to) does); it fails only when the association is shut down, or
+    /// when receiving from the local socket fails.
+    pub async fn recv(&self, buf: &mut [u8]) -> Result<(usize, Option<SocketAddr>), ProxyError> {
         let mut rx = self.inner.state.subscribe();
         // Receiving alone doesn't contact the proxy: nothing can arrive before something was
         // sent, and a consumer that never sends (no trackers) leaves the proxy alone.
@@ -183,10 +265,14 @@ impl Socks5UdpAssociation {
                 tokio::select! {
                     r = assoc.socket.recv_from(buf) => {
                         let (len, from) = r.map_err(ProxyError::Io)?;
-                        if from != assoc.relay {
+                        // IP and port only: a link-local IPv6 relay comes with a scope id.
+                        if from.ip().to_canonical() != assoc.relay.ip().to_canonical()
+                            || from.port() != assoc.relay.port()
+                        {
                             debug!(%from, "dropping a datagram that does not come from the SOCKS5 relay");
                             continue;
                         }
+                        assoc.answered();
                         let datagram = buf.get(..len).unwrap_or_default();
                         match parse_udp_header(datagram) {
                             Ok((header_len, source)) => {
@@ -235,34 +321,54 @@ impl Socks5UdpAssociation {
 async fn maintain(inner: &Inner) {
     inner.wanted.notified().await;
     let mut backoff = MIN_BACKOFF;
+    let mut last_warning: Option<(String, Instant)> = None;
     loop {
         inner.state.send_replace(State::Connecting);
         let attempt = tokio::time::timeout(ASSOCIATE_TIMEOUT, associate(&inner.proxy)).await;
-        match attempt {
+        let (why, wait) = match attempt {
             Ok(Ok((control, assoc))) => {
                 info!(proxy = %inner.proxy, relay = %assoc.relay, "SOCKS5 UDP association established");
+                let assoc = Arc::new(assoc);
                 let started = Instant::now();
-                inner.state.send_replace(State::Up(Arc::new(assoc)));
-                let why = control_closed(control).await;
-                warn!(proxy = %inner.proxy, "SOCKS5 UDP association ended: {why}");
-                inner
-                    .state
-                    .send_replace(State::Down(format!("the association ended: {why}").into()));
+                inner.state.send_replace(State::Up(assoc.clone()));
+                let why = tokio::select! {
+                    why = control_closed(control) => why,
+                    why = relay_silent(&assoc) => why,
+                };
                 if started.elapsed() >= STABLE_ASSOCIATION {
                     backoff = MIN_BACKOFF;
                 }
+                (format!("the association ended: {why}"), backoff)
             }
             Ok(Err(e)) => {
-                warn!(proxy = %inner.proxy, "error establishing a SOCKS5 UDP association: {e}");
-                inner.state.send_replace(State::Down(e.to_string().into()));
+                // Asking again soon would get the same answer.
+                let refused = matches!(
+                    e,
+                    ProxyError::Socks5Refused(2 | 7)
+                        | ProxyError::Socks5AuthenticationFailed
+                        | ProxyError::Socks5NoAcceptableMethod
+                );
+                (
+                    e.to_string(),
+                    if refused { REFUSED_BACKOFF } else { backoff },
+                )
             }
-            Err(_) => {
-                let e = format!("no UDP association after {ASSOCIATE_TIMEOUT:?}");
-                warn!(proxy = %inner.proxy, "error establishing a SOCKS5 UDP association: {e}");
-                inner.state.send_replace(State::Down(e.into()));
-            }
+            Err(_) => (
+                format!("no UDP association after {ASSOCIATE_TIMEOUT:?}"),
+                backoff,
+            ),
+        };
+        let repeated = last_warning
+            .as_ref()
+            .is_some_and(|(last, at)| *last == why && at.elapsed() < WARN_AGAIN_AFTER);
+        if repeated {
+            debug!(proxy = %inner.proxy, retry_in = ?wait, "SOCKS5 UDP association down: {why}");
+        } else {
+            warn!(proxy = %inner.proxy, retry_in = ?wait, "SOCKS5 UDP association down: {why}");
+            last_warning = Some((why.clone(), Instant::now()));
         }
-        tokio::time::sleep(backoff).await;
+        inner.state.send_replace(State::Down(why.into()));
+        tokio::time::sleep(wait).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }
 }
@@ -280,7 +386,24 @@ async fn control_closed(mut control: TcpStream) -> String {
     }
 }
 
+/// Waits until the relay looks dead (see [`SILENT_SENDS`]), and says why.
+async fn relay_silent(assoc: &Association) -> String {
+    let mut check = tokio::time::interval(SILENCE_CHECK);
+    loop {
+        check.tick().await;
+        if assoc.is_silent() {
+            return format!(
+                "the relay sent nothing back for {SILENT_TIMEOUT:?} while datagrams went out"
+            );
+        }
+    }
+}
+
 /// Connects to the proxy, authenticates and asks for a UDP association.
+///
+/// The proxy host itself is looked up locally, like for every other proxy connection. Neither
+/// socket is bound to a network device: like the SOCKS TCP connections to the proxy, the
+/// association follows the routing table.
 async fn associate(proxy: &ProxyConfig) -> Result<(TcpStream, Association), ProxyError> {
     let mut control = TcpStream::connect((proxy.host(), proxy.port()))
         .await
@@ -293,30 +416,51 @@ async fn associate(proxy: &ProxyConfig) -> Result<(TcpStream, Association), Prox
         .write_all(&[5, 3, 0, 1, 0, 0, 0, 0, 0, 0])
         .await
         .map_err(ProxyError::Io)?;
-    let relay = read_socks5_reply(&mut control).await?;
-    if relay.port() == 0 {
+    let bound = read_socks5_reply(&mut control).await?;
+    if bound.port() == 0 {
         return Err(ProxyError::Malformed("UDP relay port 0"));
     }
-    // An unspecified relay address means "the address of the proxy".
-    let relay = if relay.ip().is_unspecified() {
-        let proxy_ip = control.peer_addr().map_err(ProxyError::Io)?.ip();
-        SocketAddr::new(proxy_ip, relay.port())
-    } else {
-        relay
-    };
+    let proxy_ip = control.peer_addr().map_err(ProxyError::Io)?.ip();
+    let relay = relay_address(bound, proxy_ip);
     let bind: SocketAddr = match relay {
         SocketAddr::V4(_) => (Ipv4Addr::UNSPECIFIED, 0).into(),
         SocketAddr::V6(_) => (Ipv6Addr::UNSPECIFIED, 0).into(),
     };
     let socket = UdpSocket::bind(bind).await.map_err(ProxyError::Io)?;
-    Ok((
-        control,
-        Association {
-            socket,
-            relay,
-            send_buf: tokio::sync::Mutex::new(Vec::new()),
-        },
-    ))
+    Ok((control, Association::new(socket, relay)))
+}
+
+/// Where to send datagrams, given the relay address `bound` from the proxy's reply and the
+/// address `proxy_ip` the control connection reached the proxy at.
+///
+/// An unspecified address means "the proxy host" (RFC 1928 §7). A proxy behind a NAT or in a
+/// container may also give its own internal address, which can't be the right one when the
+/// control connection reached it elsewhere: a loopback address when the proxy is not on this
+/// host, or a private one when the proxy is on a public address. Then the proxy host is used
+/// with the given port too.
+fn relay_address(bound: SocketAddr, proxy_ip: IpAddr) -> SocketAddr {
+    let ip = bound.ip().to_canonical();
+    let proxy_ip = proxy_ip.to_canonical();
+    let internal = ip.is_unspecified()
+        || (ip.is_loopback() && !proxy_ip.is_loopback())
+        || (is_private(ip) && !is_private(proxy_ip) && !proxy_ip.is_loopback());
+    if internal {
+        SocketAddr::new(proxy_ip, bound.port())
+    } else {
+        bound
+    }
+}
+
+/// Addresses only reachable inside some private network.
+fn is_private(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let [a, b, ..] = ip.octets();
+            // 100.64.0.0/10 is carrier-grade NAT (RFC 6598).
+            ip.is_private() || ip.is_link_local() || (a == 100 && (64..128).contains(&b))
+        }
+        IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local(),
+    }
 }
 
 fn io_error(e: std::io::Error) -> ProxyError {
@@ -374,6 +518,10 @@ async fn socks5_authenticate(
 }
 
 /// Reads `VER REP RSV ATYP BND.ADDR BND.PORT`.
+///
+/// A `BND.ADDR` given as a host name comes back as the unspecified address, i.e. "the proxy
+/// host" (see [`relay_address`]): looking the name up here would bypass the proxy's resolver
+/// under `socks5h`, and a name the proxy gives itself rarely resolves from outside anyway.
 async fn read_socks5_reply(stream: &mut TcpStream) -> Result<SocketAddr, ProxyError> {
     let mut head = [0u8; 4];
     stream.read_exact(&mut head).await.map_err(io_error)?;
@@ -396,16 +544,16 @@ async fn read_socks5_reply(stream: &mut TcpStream) -> Result<SocketAddr, ProxyEr
         }
         3 => {
             let len = stream.read_u8().await.map_err(io_error)?;
-            let mut name = vec![0u8; len.into()];
-            stream.read_exact(&mut name).await.map_err(io_error)?;
-            let port = stream.read_u16().await.map_err(io_error)?;
-            let name = std::str::from_utf8(&name)
-                .map_err(|_| ProxyError::Malformed("relay host name is not UTF-8"))?;
-            return tokio::net::lookup_host((name, port))
-                .await
-                .map_err(ProxyError::Io)?
-                .next()
-                .ok_or(ProxyError::Malformed("relay host name does not resolve"));
+            let mut name = [0u8; 255];
+            let name = name
+                .get_mut(..usize::from(len))
+                .ok_or(ProxyError::Malformed("relay host name too long"))?;
+            stream.read_exact(name).await.map_err(io_error)?;
+            debug!(
+                name = %String::from_utf8_lossy(name),
+                "the SOCKS5 relay is given by name: using the proxy host"
+            );
+            Ipv4Addr::UNSPECIFIED.into()
         }
         _ => return Err(ProxyError::Malformed("unknown address type")),
     };
@@ -449,8 +597,9 @@ fn write_udp_header(buf: &mut Vec<u8>, target: TargetAddr<'_>) -> Result<(), Pro
     Ok(())
 }
 
-/// Parses the header of a datagram from the relay: `(header length, source)`.
-fn parse_udp_header(d: &[u8]) -> Result<(usize, SocketAddr), &'static str> {
+/// Parses the header of a datagram from the relay: `(header length, source)`, where the source
+/// is `None` when the relay gave it as a host name (`ATYP=3`).
+fn parse_udp_header(d: &[u8]) -> Result<(usize, Option<SocketAddr>), &'static str> {
     let [_, _, frag, atyp, rest @ ..] = d else {
         return Err("truncated header");
     };
@@ -464,7 +613,7 @@ fn parse_udp_header(d: &[u8]) -> Result<(usize, SocketAddr), &'static str> {
                     Ipv4Addr::new(*a, *b, *c, *d),
                     u16::from_be_bytes([*p0, *p1]),
                 );
-                (SocketAddr::V4(addr), SOCKS5_UDP_HEADER_MIN)
+                (Some(SocketAddr::V4(addr)), SOCKS5_UDP_HEADER_MIN)
             }
             _ => return Err("truncated header"),
         },
@@ -475,9 +624,22 @@ fn parse_udp_header(d: &[u8]) -> Result<(usize, SocketAddr), &'static str> {
             let ip: [u8; 16] = ip.try_into().map_err(|_| "truncated header")?;
             let port = u16::from_be_bytes([port[0], port[1]]);
             let addr = SocketAddrV6::new(Ipv6Addr::from(ip), port, 0, 0);
-            (SocketAddr::V6(addr), 22)
+            (Some(SocketAddr::V6(addr)), 22)
         }
-        3 => return Err("the source is a host name"),
+        3 => {
+            let [name_len, rest @ ..] = rest else {
+                return Err("truncated header");
+            };
+            let name_len = usize::from(*name_len);
+            if name_len == 0 {
+                return Err("empty host name");
+            }
+            // The name and the port.
+            if rest.len() < name_len + 2 {
+                return Err("truncated header");
+            }
+            (None, 4 + 1 + name_len + 2)
+        }
         _ => return Err("unknown address type"),
     };
     Ok((len, source))
@@ -779,7 +941,7 @@ mod tests {
         assert_eq!(buf, [0, 0, 0, 1, 1, 2, 3, 4, 0x12, 0x34]);
         assert_eq!(
             parse_udp_header(&buf),
-            Ok((10, SocketAddr::from(([1, 2, 3, 4], 0x1234))))
+            Ok((10, Some(SocketAddr::from(([1, 2, 3, 4], 0x1234)))))
         );
 
         buf.clear();
@@ -791,12 +953,23 @@ mod tests {
         let v6: SocketAddr = "[2001:db8::1]:80".parse().unwrap();
         write_udp_header(&mut buf, v6.into()).unwrap();
         assert_eq!(buf.len(), 22);
-        assert_eq!(parse_udp_header(&buf), Ok((22, v6)));
+        assert_eq!(parse_udp_header(&buf), Ok((22, Some(v6))));
 
         buf.clear();
         write_udp_header(&mut buf, TargetAddr::Domain("ab", 80)).unwrap();
         assert_eq!(buf, [0, 0, 0, 3, 2, b'a', b'b', 0, 80]);
-        assert!(parse_udp_header(&buf).is_err(), "a host name as the source");
+        assert_eq!(
+            parse_udp_header(&buf),
+            Ok((9, None)),
+            "a host name as the source"
+        );
+        for len in 0..9 {
+            assert!(parse_udp_header(&buf[..len]).is_err());
+        }
+        assert!(
+            parse_udp_header(&[0, 0, 0, 3, 0, 0, 80]).is_err(),
+            "an empty name"
+        );
 
         assert!(
             parse_udp_header(&[0, 0, 1, 1, 1, 2, 3, 4, 0, 80]).is_err(),
@@ -884,5 +1057,201 @@ mod tests {
         assert_eq!(from, target);
         drop(assoc);
         tokio::time::timeout(WAIT, server).await.unwrap().unwrap();
+    }
+
+    /// A hand-written SOCKS5 server that accepts any number of control connections, answers
+    /// UDP ASSOCIATE with `BND.ADDR` = `bound` (ATYP and address bytes) and the port of
+    /// `relay`, a socket of the test, and keeps the control connections open.
+    struct ScriptedProxy {
+        addr: SocketAddr,
+        relay: UdpSocket,
+        accepted: Arc<AtomicU32>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for ScriptedProxy {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl ScriptedProxy {
+        async fn start(bound: &[u8]) -> Self {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let relay = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+            let mut reply = vec![5, 0, 0];
+            reply.extend_from_slice(bound);
+            reply.extend_from_slice(&relay.local_addr().unwrap().port().to_be_bytes());
+            let accepted = Arc::new(AtomicU32::new(0));
+            let task = tokio::spawn({
+                let accepted = accepted.clone();
+                async move {
+                    while let Ok((mut control, _)) = listener.accept().await {
+                        accepted.fetch_add(1, Ordering::Relaxed);
+                        let reply = reply.clone();
+                        tokio::spawn(async move {
+                            let mut greeting = [0u8; 3];
+                            control.read_exact(&mut greeting).await.unwrap();
+                            control.write_all(&[5, 0]).await.unwrap();
+                            let mut request = [0u8; 10];
+                            control.read_exact(&mut request).await.unwrap();
+                            assert_eq!(request[..2], [5, 3]);
+                            control.write_all(&reply).await.unwrap();
+                            let mut rest = Vec::new();
+                            let _ = control.read_to_end(&mut rest).await;
+                        });
+                    }
+                }
+            });
+            Self {
+                addr,
+                relay,
+                accepted,
+                task,
+            }
+        }
+
+        fn association(&self) -> Socks5UdpAssociation {
+            Socks5UdpAssociation::new(
+                ProxyConfig::parse(&format!("socks5://{}", self.addr)).unwrap(),
+                &CancellationToken::new(),
+            )
+            .unwrap()
+        }
+
+        fn accepted(&self) -> u32 {
+            self.accepted.load(Ordering::Relaxed)
+        }
+    }
+
+    #[tokio::test]
+    async fn host_name_sources_are_delivered_by_recv() {
+        let proxy = ScriptedProxy::start(&[1, 127, 0, 0, 1]).await;
+        let assoc = proxy.association();
+        assoc
+            .send_to(b"ping", TargetAddr::Domain("tracker.example", 80))
+            .await
+            .unwrap();
+        let mut buf = [0u8; 1024];
+        let (_, client) = proxy.relay.recv_from(&mut buf).await.unwrap();
+        let mut answer = b"\0\0\0\x03\x0ftracker.example\0\x50".to_vec();
+        answer.extend_from_slice(b"pong");
+        proxy.relay.send_to(&answer, client).await.unwrap();
+        let (len, source) = tokio::time::timeout(WAIT, assoc.recv(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&buf[..len], b"pong");
+        assert_eq!(source, None);
+    }
+
+    #[tokio::test]
+    async fn a_relay_given_by_name_is_the_proxy_host() {
+        // A name nobody can resolve: it must not be looked up at all.
+        let proxy = ScriptedProxy::start(b"\x03\x0drelay.invalid").await;
+        let assoc = proxy.association();
+        assoc
+            .send_to(b"x", SocketAddr::from((Ipv4Addr::LOCALHOST, 9)).into())
+            .await
+            .unwrap();
+        let mut buf = [0u8; 64];
+        let (len, _) = tokio::time::timeout(WAIT, proxy.relay.recv_from(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(buf.get(len - 1), Some(&b'x'));
+    }
+
+    /// A relay that swallows everything while its control connection stays open (a proxy host
+    /// that vanished without closing the connection) is given up and a new association made.
+    #[tokio::test]
+    async fn a_silent_relay_is_rebuilt() {
+        let proxy = ScriptedProxy::start(&[1, 127, 0, 0, 1]).await;
+        let assoc = proxy.association();
+        let target = TargetAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 9)));
+        tokio::time::timeout(WAIT, async {
+            while proxy.accepted() < 2 {
+                // Fails while the association is being rebuilt.
+                let _ = assoc.send_to(b"x", target).await;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the silent association was kept");
+    }
+
+    /// An answer, however rare, keeps the association: only silence counts.
+    #[tokio::test]
+    async fn a_relay_that_answers_is_kept() {
+        let proxy = ScriptedProxy::start(&[1, 127, 0, 0, 1]).await;
+        let assoc = proxy.association();
+        let target = SocketAddr::from((Ipv4Addr::LOCALHOST, 9));
+        let mut buf = [0u8; 64];
+        let started = Instant::now();
+        while started.elapsed() < SILENT_TIMEOUT * 3 {
+            for _ in 0..SILENT_SENDS {
+                assoc.send_to(b"x", target.into()).await.unwrap();
+            }
+            let mut client = None;
+            for _ in 0..SILENT_SENDS {
+                client = Some(proxy.relay.recv_from(&mut buf).await.unwrap().1);
+            }
+            let mut answer = vec![0, 0, 0, 1, 127, 0, 0, 1, 0, 9];
+            answer.push(b'y');
+            proxy.relay.send_to(&answer, client.unwrap()).await.unwrap();
+            tokio::time::timeout(WAIT, assoc.recv_from(&mut buf))
+                .await
+                .unwrap()
+                .unwrap();
+            tokio::time::sleep(SILENT_TIMEOUT / 4).await;
+        }
+        assert_eq!(proxy.accepted(), 1);
+    }
+
+    /// A proxy that refuses UDP ASSOCIATE is not asked again soon.
+    #[tokio::test]
+    async fn a_refusal_is_not_retried_soon() {
+        let mut opts = FakeProxyOptions::new(FakeProxyKind::Socks5);
+        opts.udp = false;
+        let proxy = FakeProxy::start(opts).await;
+        let assoc = association(&proxy);
+        let target = TargetAddr::from(SocketAddr::from((Ipv4Addr::LOCALHOST, 9)));
+        let started = Instant::now();
+        // The normal backoff would have made three more attempts by then.
+        while started.elapsed() < MIN_BACKOFF * 7 {
+            assert!(assoc.send_to(b"x", target).await.is_err());
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(proxy.accepted(), 1);
+    }
+
+    #[test]
+    fn internal_relay_addresses_mean_the_proxy_host() {
+        let addr = |s: &str| -> SocketAddr { s.parse().unwrap() };
+        let ip = |s: &str| -> IpAddr { s.parse().unwrap() };
+        for (bound, proxy, want) in [
+            // Unspecified: always the proxy host.
+            ("0.0.0.0:7000", "203.0.113.5", "203.0.113.5:7000"),
+            ("[::]:7000", "2001:db8::5", "[2001:db8::5]:7000"),
+            // Loopback or private while the proxy is reached elsewhere.
+            ("127.0.0.1:7000", "203.0.113.5", "203.0.113.5:7000"),
+            ("172.17.0.2:7000", "203.0.113.5", "203.0.113.5:7000"),
+            ("100.64.1.1:7000", "203.0.113.5", "203.0.113.5:7000"),
+            ("[fd00::2]:7000", "2001:db8::5", "[2001:db8::5]:7000"),
+            // Taken as given: a relay on another public host, a private relay of a proxy on
+            // the local network, a loopback relay of a local proxy.
+            ("198.51.100.7:7000", "203.0.113.5", "198.51.100.7:7000"),
+            ("192.168.1.3:7000", "192.168.1.2", "192.168.1.3:7000"),
+            ("127.0.0.1:7000", "127.0.0.1", "127.0.0.1:7000"),
+            ("10.0.0.3:7000", "127.0.0.1", "10.0.0.3:7000"),
+            ("[2001:db8::7]:7000", "2001:db8::5", "[2001:db8::7]:7000"),
+        ] {
+            assert_eq!(
+                relay_address(addr(bound), ip(proxy)),
+                addr(want),
+                "{bound} from {proxy}"
+            );
+        }
     }
 }

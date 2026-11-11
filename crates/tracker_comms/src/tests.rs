@@ -1116,29 +1116,34 @@ async fn udp_announce_and_scrape_through_socks5() {
     assert_eq!(proxy.associations(), 1, "one association for every request");
 }
 
+/// Behind `socks5h` the tracker is given to the proxy by name, and its answers are taken also
+/// when the relay names it as their source (`ATYP=3`).
 #[tokio::test(flavor = "multi_thread")]
 async fn socks5h_sends_the_tracker_host_name_to_the_proxy() {
-    let mut opts = FakeProxyOptions::new(FakeProxyKind::Socks5);
-    opts.remote_dns = true;
-    let proxy = FakeProxy::start(opts).await;
-    let u = FakeUdp::start().await;
-    let url: Url = format!("udp://localhost:{}/announce", u.addr.port())
-        .parse()
-        .unwrap();
-    let tt = proxied(&proxy, url).await;
-    let _consumer = consume(&tt);
-    eventually("an announce and a scrape", || {
-        !u.events().is_empty() && tt.stats()[0].downloaded == Some(42)
-    })
-    .await;
-    assert_eq!(tt.stats()[0].state, TrackerState::Working);
-    let target = format!("localhost:{}", u.addr.port());
-    let datagrams = proxy.datagrams();
-    assert!(
-        datagrams.iter().all(|d| d.target == target),
-        "the host name was resolved locally: {datagrams:?}"
-    );
-    assert_only_relayed(&u, &proxy);
+    for name_sources in [false, true] {
+        let mut opts = FakeProxyOptions::new(FakeProxyKind::Socks5);
+        opts.remote_dns = true;
+        opts.name_sources = name_sources;
+        let proxy = FakeProxy::start(opts).await;
+        let u = FakeUdp::start().await;
+        let url: Url = format!("udp://localhost:{}/announce", u.addr.port())
+            .parse()
+            .unwrap();
+        let tt = proxied(&proxy, url).await;
+        let _consumer = consume(&tt);
+        eventually("an announce and a scrape", || {
+            !u.events().is_empty() && tt.stats()[0].downloaded == Some(42)
+        })
+        .await;
+        assert_eq!(tt.stats()[0].state, TrackerState::Working);
+        let target = format!("localhost:{}", u.addr.port());
+        let datagrams = proxy.datagrams();
+        assert!(
+            datagrams.iter().all(|d| d.target == target),
+            "the host name was resolved locally: {datagrams:?}"
+        );
+        assert_only_relayed(&u, &proxy);
+    }
 }
 
 /// SOCKS4 and HTTP proxies can't relay UDP: the tracker is in error and nothing is sent, to
