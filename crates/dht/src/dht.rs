@@ -2885,6 +2885,9 @@ mod tests {
         let liar = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let liar_addr = liar.local_addr().unwrap();
         let liar_id = Id20::new([0x42; 20]);
+        // Counts the forged answers sent, so that the test cannot pass with the liar left out.
+        let lies = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let lies_sent = lies.clone();
         let liar_task = tokio::spawn(async move {
             let mut buf = [0u8; 2048];
             loop {
@@ -2915,6 +2918,7 @@ mod tests {
                 )
                 .unwrap();
                 liar.send_to(&out, from).await.unwrap();
+                lies_sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         });
         nodes[2]
@@ -2927,6 +2931,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((got.seq, &got.value[..]), (2, &b"4:real"[..]));
+        assert!(lies.load(std::sync::atomic::Ordering::SeqCst) > 0);
         liar_task.abort();
     }
 
@@ -3186,6 +3191,8 @@ mod tests {
         // A value that does not hash to the target is ignored.
         let liar = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let liar_addr = liar.local_addr().unwrap();
+        let lies = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let lies_sent = lies.clone();
         let liar_task = tokio::spawn(async move {
             let mut buf = [0u8; 2048];
             loop {
@@ -3210,6 +3217,9 @@ mod tests {
                 )
                 .unwrap();
                 liar.send_to(&out, from).await.unwrap();
+                if matches!(msg.kind, MessageKind::GetRequest(_)) {
+                    lies_sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
             }
         });
         let missing = bep44::immutable_target(b"3:abc");
@@ -3218,6 +3228,8 @@ mod tests {
             .write()
             .add_node(Id20::new([0x42; 20]), liar_addr);
         assert_eq!(nodes[1].get_immutable(missing).await.unwrap(), None);
+        // The liar was asked, and answered.
+        assert!(lies.load(std::sync::atomic::Ordering::SeqCst) > 0);
 
         // A node that never answers is one of the lookup's seeds; the value from the others is
         // final, so the call does not wait RESPONSE_TIMEOUT for it.

@@ -1,5 +1,5 @@
 //! BEP 44 items between the rqbit DHT and the libtorrent DHT, both on loopback: what one puts,
-//! the other gets, byte for byte.
+//! the other gets, byte for byte, and each side checks the other's signatures.
 
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -46,6 +46,15 @@ def main():
                 session.dht_put_immutable_item(lt.bdecode(bytes.fromhex(cmd["value"])))
             elif name == "get_immutable":
                 session.dht_get_immutable_item(lt.sha1_hash(bytes.fromhex(cmd["target"])))
+            elif name == "put_mutable":
+                # The binding stores `data` as a bencoded string, signed with the expanded
+                # (64 byte) private key, at the sequence number found plus one.
+                session.dht_put_mutable_item(
+                    bytes.fromhex(cmd["private_key"]),
+                    bytes.fromhex(cmd["public_key"]),
+                    bytes.fromhex(cmd["data"]),
+                    bytes.fromhex(cmd["salt"]),
+                )
             elif name == "get_mutable":
                 session.dht_get_mutable_item(
                     bytes.fromhex(cmd["key"]), bytes.fromhex(cmd["salt"])
@@ -54,7 +63,7 @@ def main():
                 raise RuntimeError("unknown command %r" % name)
         for a in pop_alerts(session, 0.1):
             if isinstance(a, lt.dht_put_alert):
-                emit("put", target=str(a.target), num_success=a.num_success)
+                emit("put", target=str(a.target), seq=a.seq, num_success=a.num_success)
             elif isinstance(a, lt.dht_immutable_item_alert):
                 value = None if a.item is None else lt.bencode(a.item).hex()
                 emit("immutable_item", target=str(a.target), value=value)
@@ -142,6 +151,34 @@ async fn test_dht_items_with_libtorrent() -> anyhow::Result<()> {
     assert_eq!(a.get_immutable(target).await?.as_deref(), Some(&value[..]));
     assert_eq!(b.get_immutable(target).await?.as_deref(), Some(&value[..]));
 
+    // libtorrent signs and puts a mutable item, rqbit checks the signature and gets it. The keys
+    // are those of the BEP 44 test vectors: the binding takes the expanded private key.
+    let public_key = "77ff84905a91936367c01360803104f92432fcd904a43511876df5cdf3e7e548";
+    let put = until_libtorrent(
+        &mut lt,
+        json!({
+            "cmd": "put_mutable",
+            "private_key": "e06d3183d14159228433ed599221b80bd0a5ce8352e4bdf0262f76786ef1c74d\
+                            b7e7a9fea2c0eb269d61e3b38e450a22e754941ac78479d6c54e1faf6037881d",
+            "public_key": public_key,
+            "data": hex(b"from libtorrent"),
+            "salt": hex(b"lt"),
+        }),
+        "put",
+        |e| e["num_success"].as_u64().unwrap_or(0) > 0,
+    )
+    .await?;
+    let mut key = [0u8; 32];
+    for (i, k) in key.iter_mut().enumerate() {
+        *k = u8::from_str_radix(&public_key[i * 2..i * 2 + 2], 16)?;
+    }
+    let item = a
+        .get_mutable(key, b"lt")
+        .await?
+        .context("rqbit did not find the item libtorrent put")?;
+    assert_eq!(&item.value[..], b"15:from libtorrent");
+    assert_eq!(Some(item.seq), put["seq"].as_i64());
+
     // rqbit puts an immutable item, libtorrent gets it.
     let value = Bytes::from_static(b"d1:ai1e1:b3:xyze");
     let target = b.put_immutable(value.clone()).await?;
@@ -153,6 +190,7 @@ async fn test_dht_items_with_libtorrent() -> anyhow::Result<()> {
     )
     .await?;
     assert_eq!(got["value"], json!(hex(&value)));
+    let rqbit_immutable = (target, value);
 
     // rqbit puts a mutable item with a salt, libtorrent gets it.
     let key = [5u8; 32];
@@ -171,6 +209,23 @@ async fn test_dht_items_with_libtorrent() -> anyhow::Result<()> {
     )
     .await?;
     assert_eq!(got["value"], json!(hex(&value)));
+
+    // rqbit reads libtorrent's answers to `get`: with both rqbit nodes stopped, libtorrent is
+    // the only node left that holds what they put, and a new rqbit node gets it from there.
+    for node in [&a, &b] {
+        node.cancellation_token().cancel();
+    }
+    let c = start_node(&[lt_addr]).await?;
+    c.add_node(lt_addr)
+        .await
+        .context("libtorrent did not answer a ping")?;
+    let (target, immutable) = rqbit_immutable;
+    assert_eq!(c.get_immutable(target).await?, Some(immutable));
+    let item = c
+        .get_mutable(dht::ed25519_public_key(&key), salt)
+        .await?
+        .context("libtorrent did not hand out the mutable item")?;
+    assert_eq!((item.seq, item.value), (7, value));
 
     lt.send(&json!({"cmd": "quit"})).await?;
     Ok(())
