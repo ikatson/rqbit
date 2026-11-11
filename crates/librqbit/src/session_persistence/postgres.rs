@@ -119,9 +119,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             )
             .bind(
                 torrent
-                    .shared()
-                    .options
-                    .output_folder
+                    .output_folder()
                     .to_str()
                     .context("output_folder")?
                     .to_owned(),

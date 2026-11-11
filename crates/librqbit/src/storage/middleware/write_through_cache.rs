@@ -14,7 +14,9 @@ use parking_lot::RwLock;
 
 use crate::{
     FileInfos, ManagedTorrentShared,
-    storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
+    storage::{
+        MoveStorageOutcome, MoveStorageRequest, StorageFactory, StorageFactoryExt, TorrentStorage,
+    },
     torrent_state::TorrentMetadata,
 };
 
@@ -140,6 +142,30 @@ impl<U: TorrentStorage> TorrentStorage for WriteThroughCacheStorage<U> {
 
     fn on_piece_completed(&self, piece_index: ValidPieceIndex) -> anyhow::Result<()> {
         self.underlying.on_piece_completed(piece_index)
+    }
+
+    fn file_length(&self, file_id: usize) -> anyhow::Result<Option<u64>> {
+        self.underlying.file_length(file_id)
+    }
+
+    fn rename_file(
+        &self,
+        file_id: usize,
+        from: &std::path::Path,
+        to: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        // The bytes don't change, only where they live, so the cache stays valid.
+        self.underlying.rename_file(file_id, from, to)
+    }
+
+    fn move_storage(&self, request: &MoveStorageRequest<'_>) -> anyhow::Result<MoveStorageOutcome> {
+        let outcome = self.underlying.move_storage(request)?;
+        // A file adopted at the destination holds other bytes than the ones cached here,
+        // and the recheck that follows must read those.
+        if !outcome.adopted_files.is_empty() {
+            self.lru.write().clear();
+        }
+        Ok(outcome)
     }
 }
 

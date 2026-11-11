@@ -5,9 +5,9 @@ pub mod stats;
 mod streaming;
 pub mod utils;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::Ordering;
@@ -115,7 +115,6 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_read_write_timeout: Option<Duration>,
     pub peer_max_request_window: Option<usize>,
     pub allow_overwrite: bool,
-    pub output_folder: PathBuf,
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
@@ -196,11 +195,60 @@ pub struct ManagedTorrentShared {
     pub(crate) magnet_name: Option<String>,
 
     pub(crate) client_name_and_version: String,
+
+    // Where the files are. Session::move_storage and Session::rename_file change it at run
+    // time. A leaf lock: nothing else is locked while it's held.
+    pub(crate) location: RwLock<StorageLocation>,
+}
+
+/// Where the files of a torrent are stored.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StorageLocation {
+    pub output_folder: PathBuf,
+    // Files whose path, relative to the output folder, isn't the one the torrent gives them.
+    pub renamed_files: BTreeMap<usize, PathBuf>,
 }
 
 impl ManagedTorrentShared {
     pub(crate) fn client_name_and_version(&self) -> &str {
         &self.client_name_and_version
+    }
+
+    /// The folder the files of the torrent are stored under right now.
+    ///
+    /// [`Session::move_storage`] changes it, so don't keep it: read it again when it's needed.
+    /// A [`StorageFactory`](crate::storage::StorageFactory) reads it in `create`.
+    pub fn output_folder(&self) -> PathBuf {
+        self.location.read().output_folder.clone()
+    }
+
+    /// The path of file `file_index`, relative to [`Self::output_folder`], that the file is
+    /// stored under right now: the one from the torrent's metadata
+    /// ([`FileInfo::relative_filename`]) unless [`Session::rename_file`] gave it another one.
+    /// `None` if there's no such file.
+    ///
+    /// A [`StorageFactory`](crate::storage::StorageFactory) that stores files by name must
+    /// use this rather than the metadata, or renamed files are lost on the next start.
+    pub fn file_relative_path(
+        &self,
+        metadata: &TorrentMetadata,
+        file_index: usize,
+    ) -> Option<PathBuf> {
+        let published = &metadata.file_infos.get(file_index)?.relative_filename;
+        Some(
+            self.location
+                .read()
+                .renamed_files
+                .get(&file_index)
+                .unwrap_or(published)
+                .clone(),
+        )
+    }
+
+    /// The files [`Session::rename_file`] gave another path, by index, with that path
+    /// (relative to [`Self::output_folder`]).
+    pub fn renamed_files(&self) -> BTreeMap<usize, PathBuf> {
+        self.location.read().renamed_files.clone()
     }
 }
 
@@ -211,6 +259,13 @@ pub struct ManagedTorrent {
     pub metadata: ArcSwapOption<TorrentMetadata>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
+    // Held for the whole of a storage operation (recheck, move, rename), so that two of them
+    // never interleave on one torrent: the second one waits. Session::pause, unpause and delete
+    // take it too, so they don't change the state under an operation.
+    pub(crate) storage_op: tokio::sync::Mutex<()>,
+    // Cancelled when the torrent is deleted; a child of the session's token, so stopping the
+    // session cancels it too. A storage operation that sees it gives up and undoes its work.
+    pub(crate) storage_op_cancel: CancellationToken,
 }
 
 impl ManagedTorrent {
@@ -233,9 +288,20 @@ impl ManagedTorrent {
         &self.shared
     }
 
-    /// The resolved on-disk folder this torrent's files are written under.
-    pub fn output_folder(&self) -> &Path {
-        &self.shared.options.output_folder
+    /// The folder this torrent's files are stored under right now. It changes with
+    /// [`Session::move_storage`].
+    pub fn output_folder(&self) -> PathBuf {
+        self.shared.output_folder()
+    }
+
+    /// The path, relative to [`Self::output_folder`], of file `file_index` as it is stored
+    /// now: renames by [`Session::rename_file`] included, unlike
+    /// [`TorrentMetadata::file_infos`], which describes the torrent as published. `None` if
+    /// the metadata isn't resolved or there's no such file.
+    pub fn file_path(&self, file_index: usize) -> Option<PathBuf> {
+        let metadata = self.metadata.load();
+        self.shared
+            .file_relative_path(metadata.as_ref()?, file_index)
     }
 
     pub fn with_metadata<R>(

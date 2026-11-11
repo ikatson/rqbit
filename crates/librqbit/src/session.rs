@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::{
-    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared,
+    ApiError, CreateTorrentOptions, ManagedTorrent, ManagedTorrentShared,
     api::TorrentIdOrHash,
     api_error::WithStatus,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
@@ -36,7 +36,7 @@ use crate::{
     },
     torrent_state::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
-        TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
+        StorageLocation, TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
     },
     type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, PeerStream},
 };
@@ -1371,7 +1371,6 @@ impl Session {
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     peer_max_request_window: peer_opts.max_request_window,
                     allow_overwrite: opts.overwrite,
-                    output_folder,
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),
@@ -1382,6 +1381,10 @@ impl Session {
                 session: Arc::downgrade(self),
                 magnet_name: name,
                 client_name_and_version: self.client_name_and_version.clone(),
+                location: RwLock::new(StorageLocation {
+                    output_folder,
+                    renamed_files: Default::default(),
+                }),
             });
 
             let initializing = Arc::new(TorrentStateInitializing::new(
@@ -1401,6 +1404,8 @@ impl Session {
                 state_change_notify: Notify::new(),
                 shared: minfo,
                 metadata: ArcSwapOption::new(Some(metadata.clone())),
+                storage_op: Default::default(),
+                storage_op_cancel: self.cancellation_token.child_token(),
             });
 
             g.add_torrent(handle.clone(), id);
@@ -1508,15 +1513,12 @@ impl Session {
             (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),
             (Ok(storage), true) => {
                 debug!("will delete files");
-                remove_files_and_dirs(&metadata.file_infos, &storage);
-                if removed.shared().options.output_folder != self.output_folder
+                remove_files_and_dirs(removed.shared(), &metadata, &storage);
+                let output_folder = removed.output_folder();
+                if output_folder != self.output_folder
                     && let Err(e) = storage.remove_directory_if_empty(Path::new(""))
                 {
-                    warn!(
-                        ?id,
-                        "error removing {:?}: {e:#}",
-                        removed.shared().options.output_folder
-                    )
+                    warn!(?id, "error removing {output_folder:?}: {e:#}")
                 }
             }
             (_, false) => {
@@ -1748,21 +1750,30 @@ pub(crate) struct ResolveMagnetResult {
     pub seen_peers: Vec<SocketAddr>,
 }
 
-fn remove_files_and_dirs(infos: &FileInfos, files: &dyn TorrentStorage) {
+// Removes the files of a torrent at the paths they are stored under now (renames included),
+// then the directories that became empty.
+fn remove_files_and_dirs(
+    shared: &ManagedTorrentShared,
+    metadata: &TorrentMetadata,
+    files: &dyn TorrentStorage,
+) {
     let mut all_dirs = HashSet::new();
-    for (id, fi) in infos.iter().enumerate() {
+    for (id, fi) in metadata.file_infos.iter().enumerate() {
         if fi.attrs.padding {
             continue;
         }
-        let mut fname = &*fi.relative_filename;
-        if let Err(e) = files.remove_file(id, fname) {
-            warn!(?fi.relative_filename, error=?e, "could not delete file");
+        let Some(path) = shared.file_relative_path(metadata, id) else {
+            continue;
+        };
+        if let Err(e) = files.remove_file(id, &path) {
+            warn!(?path, error=?e, "could not delete file");
         } else {
-            debug!(?fi.relative_filename, "deleted the file")
+            debug!(?path, "deleted the file")
         }
+        let mut fname = path.as_path();
         while let Some(parent) = fname.parent() {
             if parent != Path::new("") {
-                all_dirs.insert(parent);
+                all_dirs.insert(parent.to_owned());
             }
             fname = parent;
         }
@@ -1774,7 +1785,7 @@ fn remove_files_and_dirs(infos: &FileInfos, files: &dyn TorrentStorage) {
         v
     };
     for dir in all_dirs {
-        if let Err(e) = files.remove_directory_if_empty(dir) {
+        if let Err(e) = files.remove_directory_if_empty(&dir) {
             warn!("error removing {dir:?}: {e:#}");
         } else {
             debug!("removed {dir:?}")

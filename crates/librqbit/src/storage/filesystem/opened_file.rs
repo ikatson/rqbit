@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io::IoSlice,
     ops::{Deref, DerefMut},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Context;
@@ -216,6 +216,92 @@ impl OpenedFile {
         let g = parking_lot::RwLockWriteGuard::downgrade(g);
         Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
     }
+
+    /// The length of the file on disk, or `None` if it doesn't exist (or is a padding
+    /// file's dummy, which has no path).
+    pub fn len(&self) -> anyhow::Result<Option<u64>> {
+        let g = self.file.read();
+        if let Some(fd) = g.fd.as_ref() {
+            let meta = fd
+                .metadata()
+                .with_context(|| format!("error reading metadata of {:?}", g.path))?;
+            return Ok(Some(meta.len()));
+        }
+        if g.path.as_os_str().is_empty() {
+            return Ok(None);
+        }
+        match std::fs::metadata(&g.path) {
+            Ok(meta) => Ok(Some(meta.len())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("error reading metadata of {:?}", g.path)),
+        }
+    }
+
+    /// Closes the file, so that it can be renamed (Windows can't rename an open file).
+    /// Returns whether it was open. Only for when nothing else uses the file.
+    pub fn close(&self) -> bool {
+        self.file.write().fd.take().is_some()
+    }
+
+    /// Points this file at `path` and, if `open`, opens it there for reading and writing,
+    /// creating it if it's missing like [`FilesystemStorage::init`](super::FilesystemStorage)
+    /// does.
+    pub fn reopen(&self, path: PathBuf, open: bool) -> anyhow::Result<()> {
+        let mut g = self.file.write();
+        g.fd = None;
+        #[cfg(windows)]
+        {
+            g.tried_marking_sparse = false;
+        }
+        if open {
+            g.fd = Some(open_read_write(&path)?);
+        }
+        g.path = path;
+        Ok(())
+    }
+
+    /// Closes the file, runs `relocate` with the file's current path, and reopens the file
+    /// (if it was open) at the path `relocate` returns, which becomes its path. The lock is
+    /// held all along, so a concurrent read or write waits instead of finding the file
+    /// closed. If `relocate` fails, the file is reopened where it was.
+    pub fn with_closed(
+        &self,
+        relocate: impl FnOnce(&Path) -> anyhow::Result<PathBuf>,
+    ) -> anyhow::Result<()> {
+        let mut g = self.file.write();
+        let was_open = g.fd.take().is_some();
+        let result = relocate(&g.path);
+        if let Ok(new_path) = &result {
+            g.path = new_path.clone();
+            #[cfg(windows)]
+            {
+                g.tried_marking_sparse = false;
+            }
+        }
+        if was_open {
+            match open_read_write(&g.path) {
+                Ok(f) => g.fd = Some(f),
+                Err(e) => {
+                    let reopen_error = e.context(format!("error reopening {:?}", g.path));
+                    return Err(match result {
+                        Ok(_) => reopen_error,
+                        Err(original) => original.context(format!("{reopen_error:#}")),
+                    });
+                }
+            }
+        }
+        result.map(|_| ())
+    }
+}
+
+fn open_read_write(path: &Path) -> anyhow::Result<File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .with_context(|| format!("error opening {path:?} in read/write mode"))
 }
 
 #[cfg(test)]

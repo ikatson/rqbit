@@ -217,12 +217,7 @@ impl Api {
                         id: Some(id),
                         info_hash: mgr.shared().info_hash.as_string(),
                         name: mgr.name(),
-                        output_folder: mgr
-                            .shared()
-                            .options
-                            .output_folder
-                            .to_string_lossy()
-                            .into_owned(),
+                        output_folder: mgr.output_folder().to_string_lossy().into_owned(),
                         total_pieces,
 
                         // These will be filled in /details and /stats endpoints
@@ -243,13 +238,7 @@ impl Api {
         let handle = self.mgr_handle(idx)?;
         let info_hash = handle.shared().info_hash;
         let only_files = handle.only_files();
-        let output_folder = handle
-            .shared()
-            .options
-            .output_folder
-            .to_string_lossy()
-            .into_owned()
-            .to_string();
+        let output_folder = handle.output_folder().to_string_lossy().into_owned();
         make_torrent_details(
             Some(handle.id()),
             &info_hash,
@@ -392,24 +381,14 @@ impl Api {
                     handle.metadata.load().as_ref().map(|r| &r.info),
                     handle.name().as_deref(),
                     handle.only_files().as_deref(),
-                    handle
-                        .shared()
-                        .options
-                        .output_folder
-                        .to_string_lossy()
-                        .into_owned(),
+                    handle.output_folder().to_string_lossy().into_owned(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
                     id: Some(id),
                     details,
                     seen_peers: None,
-                    output_folder: handle
-                        .shared()
-                        .options
-                        .output_folder
-                        .to_string_lossy()
-                        .into_owned(),
+                    output_folder: handle.output_folder().to_string_lossy().into_owned(),
                 }
             }
             AddTorrentResponse::ListOnly(ListOnlyResponse {
@@ -440,24 +419,14 @@ impl Api {
                     handle.metadata.load().as_ref().map(|r| &r.info),
                     handle.name().as_deref(),
                     handle.only_files().as_deref(),
-                    handle
-                        .shared()
-                        .options
-                        .output_folder
-                        .to_string_lossy()
-                        .into_owned(),
+                    handle.output_folder().to_string_lossy().into_owned(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
                     id: Some(id),
                     details,
                     seen_peers: None,
-                    output_folder: handle
-                        .shared()
-                        .options
-                        .output_folder
-                        .to_string_lossy()
-                        .into_owned(),
+                    output_folder: handle.output_folder().to_string_lossy().into_owned(),
                 }
             }
         };

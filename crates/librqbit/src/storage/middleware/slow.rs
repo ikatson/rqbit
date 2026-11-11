@@ -17,7 +17,9 @@ use parking_lot::Mutex;
 
 use crate::{
     ManagedTorrentShared,
-    storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
+    storage::{
+        MoveStorageOutcome, MoveStorageRequest, StorageFactory, StorageFactoryExt, TorrentStorage,
+    },
     torrent_state::TorrentMetadata,
 };
 
@@ -132,6 +134,23 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
 
     fn on_piece_completed(&self, piece_index: ValidPieceIndex) -> anyhow::Result<()> {
         self.underlying.on_piece_completed(piece_index)
+    }
+
+    fn file_length(&self, file_id: usize) -> anyhow::Result<Option<u64>> {
+        self.underlying.file_length(file_id)
+    }
+
+    fn rename_file(
+        &self,
+        file_id: usize,
+        from: &std::path::Path,
+        to: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        self.underlying.rename_file(file_id, from, to)
+    }
+
+    fn move_storage(&self, request: &MoveStorageRequest<'_>) -> anyhow::Result<MoveStorageOutcome> {
+        self.underlying.move_storage(request)
     }
 }
 
