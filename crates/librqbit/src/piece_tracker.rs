@@ -886,4 +886,208 @@ mod tests {
             _ => panic!("Expected Stolen, got {:?}", result),
         }
     }
+
+    /// A single-file torrent with one piece per entry of `levels`, at those levels.
+    fn make_leveled_chunk_tracker(levels: &[u8]) -> ChunkTracker {
+        let num_pieces = u32::try_from(levels.len()).unwrap();
+        let lengths = Lengths::new(16384 * u64::from(num_pieces), 16384).unwrap();
+        let have =
+            BF::from_boxed_slice(vec![0u8; lengths.piece_bitfield_bytes()].into_boxed_slice());
+        ChunkTracker::new(
+            have.into_dyn(),
+            PieceLevels::new(levels.into()),
+            lengths,
+            &make_test_file_infos(num_pieces),
+        )
+        .unwrap()
+    }
+
+    /// Peer A downloads piece 0 (asked for explicitly, like a stream would) and then the piece
+    /// the picker gives it.
+    fn reserve_0_then_pick(
+        tracker: &mut PieceTracker,
+        picker: &PiecePicker,
+        availability: &PieceAvailability,
+    ) -> ValidPieceIndex {
+        let piece_0 = tracker
+            .chunks
+            .get_lengths()
+            .validate_piece_index(0)
+            .unwrap();
+        let first = tracker.acquire_piece(AcquireRequest {
+            peer: peer(1),
+            peer_avg_time: None,
+            priority_pieces: std::iter::once(piece_0),
+            picker,
+            availability,
+            peer_has_piece: |_| true,
+            can_steal: |_| true,
+        });
+        assert!(matches!(first, AcquireResult::Reserved(p) if p == piece_0));
+        match tracker.acquire_piece(AcquireRequest {
+            peer: peer(1),
+            peer_avg_time: None,
+            priority_pieces: std::iter::empty(),
+            picker,
+            availability,
+            peer_has_piece: |_| true,
+            can_steal: |_| true,
+        }) {
+            AcquireResult::Reserved(p) => p,
+            other => panic!("expected Reserved, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_steal_takes_the_highest_level_piece() {
+        let mut tracker = PieceTracker::new(make_leveled_chunk_tracker(&[1, 7, 1]));
+        let file_infos = make_test_file_infos(3);
+        let (picker, availability) = make_sequential_picker(&file_infos);
+        let high = reserve_0_then_pick(&mut tracker, &picker, &availability);
+        assert_eq!(high.get(), 1);
+
+        std::thread::sleep(Duration::from_millis(5));
+
+        // Piece 0 has been in flight longer, but piece 1 is the more important one. Piece 2 is
+        // queued, but at a lower level than the steal.
+        let result = tracker.acquire_piece(AcquireRequest {
+            peer: peer(2),
+            peer_avg_time: Some(Duration::from_micros(100)),
+            priority_pieces: std::iter::empty(),
+            picker: &picker,
+            availability: &availability,
+            peer_has_piece: |_| true,
+            can_steal: |_| true,
+        });
+        match result {
+            AcquireResult::Stolen { piece, from_peer } => {
+                assert_eq!(piece, high);
+                assert_eq!(from_peer, peer(1));
+            }
+            other => panic!("expected Stolen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_steal_gives_way_to_a_higher_queued_piece() {
+        let mut tracker = PieceTracker::new(make_leveled_chunk_tracker(&[1, 1, 7]));
+        let file_infos = make_test_file_infos(3);
+        let (picker, availability) = make_sequential_picker(&file_infos);
+        // Peer A holds pieces 0 and 2; then piece 2 is given back, as when its peer dies.
+        reserve_0_then_pick(&mut tracker, &picker, &availability);
+        assert_eq!(tracker.release_pieces_owned_by(peer(1)), 2);
+        let piece_0 = tracker
+            .chunks
+            .get_lengths()
+            .validate_piece_index(0)
+            .unwrap();
+        assert!(matches!(
+            tracker.acquire_piece(AcquireRequest {
+                peer: peer(1),
+                peer_avg_time: None,
+                priority_pieces: std::iter::once(piece_0),
+                picker: &picker,
+                availability: &availability,
+                peer_has_piece: |_| true,
+                can_steal: |_| true,
+            }),
+            AcquireResult::Reserved(p) if p == piece_0
+        ));
+
+        std::thread::sleep(Duration::from_millis(5));
+
+        // Piece 0 is slow enough to steal, but queued piece 2 is worth more.
+        let result = tracker.acquire_piece(AcquireRequest {
+            peer: peer(2),
+            peer_avg_time: Some(Duration::from_micros(100)),
+            priority_pieces: std::iter::empty(),
+            picker: &picker,
+            availability: &availability,
+            peer_has_piece: |_| true,
+            can_steal: |_| true,
+        });
+        assert!(
+            matches!(result, AcquireResult::Reserved(p) if p.get() == 2),
+            "expected piece 2 from the queue, got {result:?}"
+        );
+        assert_eq!(tracker.get_inflight(piece_0).unwrap().peer, peer(1));
+    }
+
+    #[test]
+    fn test_level_zero_pieces_are_never_reserved() {
+        let mut tracker = PieceTracker::new(make_leveled_chunk_tracker(&[0, 1, 0]));
+        let file_infos = make_test_file_infos(3);
+        let (picker, availability) = make_sequential_picker(&file_infos);
+        let mut got = Vec::new();
+        loop {
+            match tracker.acquire_piece(AcquireRequest {
+                peer: peer(1),
+                peer_avg_time: None,
+                priority_pieces: std::iter::empty(),
+                picker: &picker,
+                availability: &availability,
+                peer_has_piece: |_| true,
+                can_steal: |_| true,
+            }) {
+                AcquireResult::Reserved(p) => got.push(p.get()),
+                AcquireResult::NoneAvailable => break,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert_eq!(got, vec![1]);
+    }
+
+    #[test]
+    fn test_lowering_to_zero_releases_only_the_unwanted_in_flight_pieces() {
+        let mut tracker = PieceTracker::new(make_leveled_chunk_tracker(&[1, 1, 1, 0]));
+        let file_infos = make_test_file_infos(4);
+        let (picker, availability) = make_sequential_picker(&file_infos);
+        let reserve = |tracker: &mut PieceTracker, who: u8, piece: u32| {
+            let piece = tracker
+                .chunks
+                .get_lengths()
+                .validate_piece_index(piece)
+                .unwrap();
+            let got = tracker.acquire_piece(AcquireRequest {
+                peer: peer(who),
+                peer_avg_time: None,
+                priority_pieces: std::iter::once(piece),
+                picker: &picker,
+                availability: &availability,
+                peer_has_piece: |_| true,
+                can_steal: |_| false,
+            });
+            assert!(matches!(got, AcquireResult::Reserved(p) if p == piece));
+        };
+        reserve(&mut tracker, 1, 0);
+        reserve(&mut tracker, 2, 1);
+        // Piece 3 is at 0 and in flight: a stream asked for it.
+        reserve(&mut tracker, 3, 3);
+
+        let (hns, released) = tracker
+            .set_piece_levels(PieceLevels::new(vec![1u8, 0, 0, 0].into_boxed_slice()))
+            .unwrap();
+        assert_eq!(
+            released
+                .iter()
+                .map(|(p, who)| (p.get(), *who))
+                .collect::<Vec<_>>(),
+            vec![(1, peer(2))]
+        );
+        assert_eq!(hns.selected_bytes, 16384);
+        assert_eq!(hns.needed_bytes, 16384);
+        assert!(tracker.get_inflight(released[0].0).is_none());
+        // The wanted piece and the stream's piece stay with their peers.
+        let valid = |i| {
+            tracker
+                .chunks
+                .get_lengths()
+                .validate_piece_index(i)
+                .unwrap()
+        };
+        assert_eq!(tracker.get_inflight(valid(0)).unwrap().peer, peer(1));
+        assert_eq!(tracker.get_inflight(valid(3)).unwrap().peer, peer(3));
+        // Nothing at 0 is queued.
+        assert_eq!(tracker.chunks.queued_pieces().count_ones(), 0);
+    }
 }
