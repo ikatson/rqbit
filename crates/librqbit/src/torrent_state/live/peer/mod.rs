@@ -146,6 +146,9 @@ impl Peer {
         for counter in [&counters.session_stats, &counters.stats] {
             counter.dec(&self.state);
         }
+        if let PeerState::Live(l) = &self.state {
+            counters.forget_availability(l);
+        }
         if let (Some(addr), PeerState::Live(..)) = (self.outgoing_address, &self.state) {
             counters.live_outgoing_peers.write().remove(&addr);
         }
@@ -154,6 +157,10 @@ impl Peer {
     pub fn set_state(&mut self, new: PeerState, counters: &PeerStates) -> PeerState {
         for counter in [&counters.session_stats, &counters.stats] {
             counter.incdec(&self.state, &new);
+        }
+        // A live peer only enters with an empty bitfield, so only leaving changes availability.
+        if let PeerState::Live(l) = &self.state {
+            counters.forget_availability(l);
         }
         if let Some(addr) = self.outgoing_address {
             if matches!(&self.state, PeerState::Live(..)) {
@@ -266,6 +273,10 @@ pub(crate) struct LivePeerState {
     // with the bitfield by PeerStates::update_seeder_flag.
     pub seeder: bool,
 
+    // How the bitfield above is counted in the torrent's piece availability: as one seed
+    // (it was full when it arrived) or piece by piece. Uncounting must match.
+    pub counted_as_seed: bool,
+
     // When the peer sends us data this is used to track if we asked for it.
     inflight_requests: HashSet<InflightRequest>,
 
@@ -295,6 +306,7 @@ impl LivePeerState {
             peer_interested: initial_interested,
             bitfield: BF::default(),
             seeder: false,
+            counted_as_seed: false,
             inflight_requests: Default::default(),
             late_cancelled_request_tolerance: 0,
             request_slots_changed: Default::default(),

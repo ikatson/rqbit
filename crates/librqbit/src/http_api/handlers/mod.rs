@@ -66,6 +66,8 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
             "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
             "POST /torrents/{id_or_infohash}/add_peers": "Add peers (newline-delimited)",
             "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
+            "GET /torrents/{id_or_infohash}/file_priorities": "The download priority of every file, 0 (skip) to 7 (maximum): {\"file_priorities\": [1, 0, 7]}",
+            "POST /torrents/{id_or_infohash}/file_priorities": "Set the priority of some files, as [file index, priority] pairs: {\"file_priorities\": [[0, 7], [2, 0]]}",
             "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
         },
         "server": "rqbit",
@@ -105,6 +107,10 @@ pub fn make_api_router(state: ApiState) -> Router {
             "/torrents/{id}/stream/{file_id}/{*filename}",
             get(streaming::h_torrent_stream_file),
         )
+        .route(
+            "/torrents/{id}/file_priorities",
+            get(torrents::h_torrent_file_priorities),
+        )
         .route("/torrents/limits", get(configure::h_get_session_ratelimits));
 
     if !state.opts.read_only {
@@ -133,6 +139,10 @@ pub fn make_api_router(state: ApiState) -> Router {
             .route(
                 "/torrents/{id}/update_only_files",
                 post(torrents::h_torrent_action_update_only_files),
+            )
+            .route(
+                "/torrents/{id}/file_priorities",
+                post(torrents::h_torrent_action_set_file_priorities),
             )
             .route("/torrents/{id}/add_peers", post(torrents::h_add_peers))
             .route("/torrents/create", post(torrents::h_create_torrent));

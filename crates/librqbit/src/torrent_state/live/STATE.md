@@ -17,6 +17,7 @@ pub struct PieceTracker {
 pub struct InflightPiece {
     pub peer: PeerHandle,     // Which peer "owns" this piece
     pub started: Instant,     // When download started (for steal threshold)
+    pub streamed: bool,       // A stream asked for it: stolen first, kept when its level drops to 0
 }
 ```
 
@@ -109,7 +110,8 @@ IN_FLIGHT (peer A) → IN_FLIGHT (peer B)
 ```
 
 `PieceTracker::acquire_piece()` with steal logic:
-1. Finds piece in `inflight` owned by slow peer (elapsed > threshold × avg_time)
+1. Finds piece in `inflight` owned by slow peer (elapsed > threshold × avg_time): a streamed
+   one first, then the highest priority level, then the one in flight the longest
 2. Updates `inflight[p].peer = self`
 3. Updates `inflight[p].started = now`
 4. Returns `AcquireResult::Stolen { piece, from_peer }`

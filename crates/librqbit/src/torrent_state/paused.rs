@@ -1,7 +1,8 @@
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     chunk_tracker::{ChunkTracker, HaveNeededSelected},
+    priority::PieceLevels,
     type_aliases::FileStorage,
 };
 
@@ -16,9 +17,9 @@ pub struct TorrentStatePaused {
 }
 
 impl TorrentStatePaused {
-    pub(crate) fn update_only_files(&mut self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        self.chunk_tracker
-            .update_only_files(&self.metadata.file_infos, only_files)?;
+    /// Changes the effective priority of the pieces. Nothing is in flight while paused.
+    pub(crate) fn set_piece_levels(&mut self, levels: PieceLevels) -> anyhow::Result<()> {
+        self.chunk_tracker.set_piece_levels(levels, |_| false)?;
         Ok(())
     }
 

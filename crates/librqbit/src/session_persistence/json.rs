@@ -163,8 +163,11 @@ impl JsonSessionPersistenceStore {
             info_hash: torrent.info_hash(),
             // we don't serialize this here, but to a file instead.
             torrent_bytes: Default::default(),
-            only_files: torrent.only_files().clone(),
+            only_files: torrent.only_files(),
             is_paused: torrent.is_paused(),
+            piece_picking: torrent.piece_picking(),
+            file_priorities: Some(torrent.file_priorities()),
+            piece_priorities: torrent.piece_priority_overrides(),
             output_folder: torrent.shared().options.output_folder.clone(),
         };
 
