@@ -445,19 +445,27 @@ impl ManagedTorrent {
                                 .context("bug: concurrent init semaphore was closed")?;
 
                             let check_result = init.check().await;
+
+                            // The check is over only once its result is in the state, under
+                            // the lock: a storage operation that waits for the check to stop
+                            // (see `storage_ops`) then finds the outcome in the state. Every
+                            // way out of here wakes it up.
+                            let g = t.locked.write();
                             init.finish_check();
+                            // The state was replaced while the check ran (the torrent was
+                            // deleted): its result is no longer wanted.
+                            if !matches!(&g.state, ManagedTorrentState::Initializing(cur) if Arc::ptr_eq(cur, &init))
+                            {
+                                debug!(
+                                    "no need to start torrent anymore, as it switched state from initializing"
+                                );
+                                t.state_change_notify.notify_waiters();
+                                return Ok(());
+                            }
 
                             match check_result {
                                 Ok(paused) => {
-                                    let mut g = t.locked.write();
-                                    if let ManagedTorrentState::Initializing(_) = &g.state {
-                                    } else {
-                                        debug!(
-                                            "no need to start torrent anymore, as it switched state from initializing"
-                                        );
-                                        return Ok(());
-                                    }
-
+                                    let mut g = g;
                                     g.state = ManagedTorrentState::Paused(paused);
                                     t.state_change_notify.notify_waiters();
                                     // A pause requested after the last piece was checked
@@ -480,11 +488,6 @@ impl ManagedTorrent {
                                         // found the check busy and returned). Restart the check
                                         // instead of turning a resume into an error.
                                         debug!("initial check paused, then resumed; restarting it");
-                                        let g = t.locked.write();
-                                        if !matches!(g.state, ManagedTorrentState::Initializing(_))
-                                        {
-                                            return Ok(());
-                                        }
                                         let start_paused = g.paused;
                                         return _start(
                                             &t,
@@ -497,7 +500,8 @@ impl ManagedTorrent {
                                     }
 
                                     let result = anyhow::anyhow!("{:?}", err);
-                                    t.locked.write().state = ManagedTorrentState::Error(err);
+                                    let mut g = g;
+                                    g.state = ManagedTorrentState::Error(err);
                                     t.state_change_notify.notify_waiters();
                                     Err(result)
                                 }

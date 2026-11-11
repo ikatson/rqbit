@@ -23,7 +23,10 @@ use crate::{
 
 const MAX_FASTRESUME_CHECKS: usize = 64;
 
-use super::{ManagedTorrentShared, TorrentMetadata, paused::TorrentStatePaused};
+use super::{
+    ManagedTorrentShared, TorrentMetadata,
+    paused::{CarriedStats, TorrentStatePaused},
+};
 
 pub struct TorrentStateInitializing {
     pub(crate) files: FileStorage,
@@ -34,6 +37,9 @@ pub struct TorrentStateInitializing {
     pause_requested: AtomicBool,
     check_running: AtomicBool,
     previously_errored: bool,
+    // AddTorrentOptions::skip_initial_check.
+    skip_check: bool,
+    carried_stats: CarriedStats,
 }
 
 impl TorrentStateInitializing {
@@ -53,7 +59,38 @@ impl TorrentStateInitializing {
             pause_requested: AtomicBool::new(false),
             check_running: AtomicBool::new(false),
             previously_errored,
+            skip_check: false,
+            carried_stats: CarriedStats::default(),
         }
+    }
+
+    /// Without a valid fastresume bitfield, trust files that all have their expected length
+    /// instead of hashing them ([`crate::AddTorrentOptions::skip_initial_check`]).
+    pub(crate) fn with_skip_check(mut self, skip_check: bool) -> Self {
+        self.skip_check = skip_check;
+        self
+    }
+
+    /// The counters the live state starts from after the check.
+    pub(crate) fn with_carried_stats(mut self, carried_stats: CarriedStats) -> Self {
+        self.carried_stats = carried_stats;
+        self
+    }
+
+    pub(crate) fn carried_stats(&self) -> CarriedStats {
+        self.carried_stats
+    }
+
+    pub(crate) fn previously_errored(&self) -> bool {
+        self.previously_errored
+    }
+
+    pub(crate) fn skip_check(&self) -> bool {
+        self.skip_check
+    }
+
+    pub(crate) fn is_check_running(&self) -> bool {
+        self.check_running.load(Ordering::Acquire)
     }
 
     pub fn get_checked_bytes(&self) -> u64 {
@@ -209,35 +246,51 @@ impl TorrentStateInitializing {
 
         let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
 
+        let selected_pieces = compute_selected_pieces(
+            self.metadata.lengths(),
+            |idx| self.is_selected(idx),
+            &self.metadata.file_infos,
+        );
+
         let have_pieces = match have_pieces {
             Some(h) => h,
             None => {
-                info!("Doing initial checksum validation, this might take a while...");
-                let have_pieces = self
-                    .shared
-                    .spawner
-                    .block_in_place_with_semaphore(|| {
-                        FileOps::new(&self.metadata.info, &self.files, &self.metadata.file_infos)
-                            .initial_check(&self.checked_bytes, &self.pause_requested)
-                    })
-                    .await?;
+                let trusted = if self.skip_check && !self.previously_errored {
+                    self.shared
+                        .spawner
+                        .block_in_place_with_semaphore(|| self.trusted_pieces(&selected_pieces))
+                        .await
+                } else {
+                    None
+                };
+                let have_pieces = match trusted {
+                    Some(have_pieces) => {
+                        info!("All selected files have their expected length, skipping the check");
+                        self.checked_bytes
+                            .store(self.metadata.lengths().total_length(), Ordering::Relaxed);
+                        have_pieces
+                    }
+                    None => {
+                        info!("Doing initial checksum validation, this might take a while...");
+                        self.shared
+                            .spawner
+                            .block_in_place_with_semaphore(|| {
+                                FileOps::new(
+                                    &self.metadata.info,
+                                    &self.files,
+                                    &self.metadata.file_infos,
+                                )
+                                .initial_check(&self.checked_bytes, &self.pause_requested)
+                            })
+                            .await?
+                    }
+                };
                 bitv_factory
                     .store_initial_check(id, have_pieces)
                     .await
                     .context("error storing initial check bitfield")?
             }
         };
-
-        let selected_pieces = compute_selected_pieces(
-            self.metadata.lengths(),
-            |idx| {
-                self.only_files
-                    .as_ref()
-                    .map(|o| o.contains(&idx))
-                    .unwrap_or(true)
-            },
-            &self.metadata.file_infos,
-        );
 
         let chunk_tracker = ChunkTracker::new(
             have_pieces.into_dyn(),
@@ -298,7 +351,45 @@ impl TorrentStateInitializing {
             files: self.files.take()?,
             chunk_tracker,
             streams: Arc::new(Default::default()),
+            carried_stats: self.carried_stats,
         };
         Ok(paused)
+    }
+
+    fn is_selected(&self, file_index: usize) -> bool {
+        self.only_files
+            .as_ref()
+            .map(|o| o.contains(&file_index))
+            .unwrap_or(true)
+    }
+
+    // For skip_initial_check: the selected pieces, if every selected file is on disk with its
+    // expected length, except those that also lie in an unselected file that isn't. `None`
+    // if a selected file is missing or has another length: then the files must be hashed.
+    fn trusted_pieces(&self, selected_pieces: &BF) -> Option<BF> {
+        let mut have = selected_pieces.clone();
+        for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
+            if fi.attrs.padding {
+                continue;
+            }
+            let len = match self.files.file_length(idx) {
+                Ok(len) => len,
+                Err(e) => {
+                    warn!(file=?fi.relative_filename, "can't tell the length of the file, will check it: {e:#}");
+                    None
+                }
+            };
+            if len == Some(fi.len) {
+                continue;
+            }
+            if self.is_selected(idx) {
+                info!(file=?fi.relative_filename, expected=fi.len, actual=?len, "the file doesn't have its expected length, will do a full check");
+                return None;
+            }
+            if let Some(pieces) = have.get_mut(fi.piece_range_usize()) {
+                pieces.fill(false);
+            }
+        }
+        Some(have)
     }
 }

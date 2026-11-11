@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     io::Read,
     net::SocketAddr,
     path::{Component, Path, PathBuf},
@@ -298,6 +298,22 @@ pub struct AddTorrentOptions {
 
     // Custom trackers
     pub trackers: Option<Vec<String>>,
+
+    /// Seed mode: if there's no valid fastresume bitfield and every selected file already
+    /// exists with exactly its expected length, take every selected piece as present without
+    /// hashing anything (pieces shared with an unselected file that isn't complete on disk
+    /// excepted). For content the user knows is complete, e.g. re-seeding after moving it or
+    /// a torrent just created from it. If a selected file is missing or has another length,
+    /// the files are checked as usual. Needs [`Self::overwrite`] like any add over existing
+    /// files. Not kept: once added, the stored bitfield says what the torrent has.
+    #[serde(default)]
+    pub skip_initial_check: bool,
+
+    /// Files stored under another path than the torrent gives them, by file index, with
+    /// that path relative to the output folder (see [`Session::rename_file`]). This is how
+    /// session persistence restores renames; the paths are validated like a rename's.
+    #[serde(default)]
+    pub renamed_files: BTreeMap<usize, PathBuf>,
 }
 
 pub struct ListOnlyResponse {
