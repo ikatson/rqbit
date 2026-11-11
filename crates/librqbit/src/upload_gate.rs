@@ -14,10 +14,12 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering},
     },
+    time::Instant,
 };
 
 use librqbit_core::lengths::ChunkInfo;
 use parking_lot::Mutex;
+use peer_binary_protocol::{Message, Request};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{peer_connection::WriterRequest, peer_policy::PeerVerdict};
@@ -53,6 +55,11 @@ struct Pending {
     cancelled: u32,
     // We unchoked the peer. A connection starts choked (BEP 3).
     unchoked: bool,
+    // When we last choked the peer, for the reject grace (`fast::CHOKE_REJECT_GRACE`).
+    choked_at: Option<Instant>,
+    // Requests turned down on arrival since the last choke, unchoke or served block, outside
+    // of the grace (see `fast::MAX_REJECTS_PER_CHOKE`).
+    rejects: u32,
     // The allowed-fast set we offered the peer (BEP 6), and its blocks served while choked.
     // Under the same lock as the queue, so accepting a request past the choke is one decision.
     fast_upload: crate::fast::FastUpload,
@@ -74,9 +81,6 @@ pub(crate) struct UploadGate {
     pending: Mutex<Pending>,
     // Both handshakes carried the Fast Extension bit (BEP 6). Set once, at the handshake.
     fast: AtomicBool,
-    // Rejects sent in the current choke period for requests turned down on arrival, see
-    // `fast::MAX_REJECTS_PER_CHOKE`.
-    rejects: AtomicU32,
 }
 
 /// What [`UploadGate::register_fast`] did with a request.
@@ -118,11 +122,22 @@ impl UploadGate {
         self.fast.load(Ordering::Acquire)
     }
 
-    /// Takes one reject out of the budget of the current choke period (see
-    /// [`MAX_REJECTS_PER_CHOKE`](crate::fast::MAX_REJECTS_PER_CHOKE)). `false`: the peer keeps
-    /// asking for what it is not given, the request is to be dropped without an answer.
-    pub fn take_reject(&self) -> bool {
-        self.rejects.fetch_add(1, Ordering::AcqRel) < crate::fast::MAX_REJECTS_PER_CHOKE
+    /// Takes one reject for a request turned down on arrival (BEP 6). Within
+    /// [`CHOKE_REJECT_GRACE`](crate::fast::CHOKE_REJECT_GRACE) of our last choke every such
+    /// request is rejected: the peer sent it before the choke reached it. Otherwise at most
+    /// [`MAX_REJECTS_PER_CHOKE`](crate::fast::MAX_REJECTS_PER_CHOKE) are rejected between two
+    /// chokes, unchokes or served blocks. `false`: the peer keeps asking for what it is
+    /// refused; BEP 6 wants every request answered, so the connection is to be closed rather
+    /// than the request dropped.
+    pub fn take_reject(&self, now: Instant) -> bool {
+        let mut g = self.pending.lock();
+        if g.choked_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::fast::CHOKE_REJECT_GRACE)
+        {
+            return true;
+        }
+        g.rejects = g.rejects.saturating_add(1);
+        g.rejects <= crate::fast::MAX_REJECTS_PER_CHOKE
     }
 
     /// The peer asked for the block. `false`: the request is ignored, because the peer is
@@ -186,13 +201,44 @@ impl UploadGate {
     /// unchoked.
     pub fn set_choked(&self, choked: bool) -> Vec<BlockKey> {
         let mut g = self.pending.lock();
+        self.choke_locked(&mut g, choked, Instant::now())
+    }
+
+    /// [`UploadGate::set_choked`] for the choker: also queues the `Choke` or `Unchoke` for the
+    /// peer and, on a Fast connection, a `RejectRequest` for every request the choke dropped,
+    /// all under the gate lock. A request turned down on arrival because of the choke is
+    /// rejected only after its registration released that lock, so the peer always reads the
+    /// `Choke` before such a reject. Returns `false` when the peer is gone.
+    pub fn announce_choked(&self, choked: bool, tx: &UnboundedSender<WriterRequest>) -> bool {
+        let mut g = self.pending.lock();
+        let dropped = self.choke_locked(&mut g, choked, Instant::now());
+        let msg = if choked {
+            Message::Choke
+        } else {
+            Message::Unchoke
+        };
+        tx.send(WriterRequest::Message(msg)).is_ok() && send_rejects(tx, dropped)
+    }
+
+    /// After a policy `Choke`: drops every request that waits, allowed-fast ones included, and
+    /// rejects each of them on a Fast connection. The choker only acts on a peer whose slot
+    /// state changes, so without this the allowed-fast requests of a peer that held no slot
+    /// would still be served. Returns `false` when the peer is gone.
+    pub fn drop_all(&self, tx: &UnboundedSender<WriterRequest>) -> bool {
+        let mut g = self.pending.lock();
+        let dropped = self.drop_blocks(&mut g, |_| true);
+        send_rejects(tx, dropped)
+    }
+
+    fn choke_locked(&self, g: &mut Pending, choked: bool, now: Instant) -> Vec<BlockKey> {
         g.unchoked = !choked;
-        self.rejects.store(0, Ordering::Release);
+        g.rejects = 0;
         if !choked {
             return Vec::new();
         }
+        g.choked_at = Some(now);
         let keep_exempt = self.level() == PeerVerdict::Allow;
-        self.drop_blocks(&mut g, |b| !(keep_exempt && b.exempt))
+        self.drop_blocks(g, |b| !(keep_exempt && b.exempt))
     }
 
     fn drop_blocks(&self, g: &mut Pending, drop: impl Fn(&PendingBlock) -> bool) -> Vec<BlockKey> {
@@ -257,6 +303,9 @@ impl UploadGate {
         g.queued -= 1;
         if cancelled {
             g.cancelled -= 1;
+        } else {
+            // The peer is being served: what it asked for before is no flood.
+            g.rejects = 0;
         }
         self.queued.store(g.queued, Ordering::Release);
         self.cancelled.store(g.cancelled, Ordering::Release);
@@ -287,6 +336,18 @@ impl UploadGate {
     }
 }
 
+/// Queues a `RejectRequest` for each block. `false`: the peer is gone.
+fn send_rejects(tx: &UnboundedSender<WriterRequest>, blocks: Vec<BlockKey>) -> bool {
+    blocks.into_iter().all(|(index, begin, length)| {
+        tx.send(WriterRequest::Message(Message::RejectRequest(Request {
+            index,
+            begin,
+            length,
+        })))
+        .is_ok()
+    })
+}
+
 /// An accepted upload request on its way to the writer of the connection.
 pub(crate) struct UploadRequest {
     pub tx: UnboundedSender<WriterRequest>,
@@ -301,6 +362,10 @@ mod tests {
     use super::*;
 
     const CAP: u32 = MAX_QUEUED_UPLOADS_PER_PEER;
+
+    fn lengths() -> Lengths {
+        Lengths::new(100_000, 32 * 1024).unwrap()
+    }
 
     fn unchoked() -> UploadGate {
         let g = UploadGate::default();
@@ -454,6 +519,163 @@ mod tests {
         assert_eq!(g.cancelled.load(Ordering::Relaxed), 0);
         assert!(g.release((0, 0, 16384)));
         assert_eq!(g.queued.load(Ordering::Relaxed), 0);
+    }
+
+    fn fast_unchoked() -> UploadGate {
+        let g = unchoked();
+        g.set_fast(true);
+        g
+    }
+
+    /// The blocks of the `RejectRequest`s queued on the channel, in order.
+    fn rejects_sent(rx: &mut tokio::sync::mpsc::UnboundedReceiver<WriterRequest>) -> Vec<BlockKey> {
+        let mut out = Vec::new();
+        while let Ok(req) = rx.try_recv() {
+            if let WriterRequest::Message(Message::RejectRequest(r)) = req {
+                out.push((r.index, r.begin, r.length));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn fast_choke_returns_each_live_request_once() {
+        let g = fast_unchoked();
+        let a = (0, 0, 16384);
+        let b = (0, 16384, 16384);
+        let c = (1, 0, 16384);
+        // Asked twice: two requests, two answers.
+        assert_eq!(g.register_fast(a, CAP), Registered::Queued);
+        assert_eq!(g.register_fast(a, CAP), Registered::Queued);
+        assert_eq!(g.register_fast(b, CAP), Registered::Queued);
+        // Cancelled: answered when the cancel arrived, not again.
+        assert_eq!(g.register_fast(c, CAP), Registered::Queued);
+        assert!(g.cancel(c));
+        let mut dropped = g.set_choked(true);
+        dropped.sort();
+        assert_eq!(dropped, vec![a, a, b]);
+        assert_eq!(g.queued.load(Ordering::Relaxed), 0);
+        assert_eq!(g.cancelled.load(Ordering::Relaxed), 0);
+        // An unchoke drops nothing.
+        assert!(g.set_choked(false).is_empty());
+    }
+
+    #[test]
+    fn choke_without_fast_returns_nothing() {
+        let g = unchoked();
+        assert!(g.register((0, 0, 16384), CAP));
+        assert!(g.set_choked(true).is_empty());
+        assert_eq!(g.queued.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn fast_register_tells_why_a_request_was_not_queued() {
+        let g = fast_unchoked();
+        for begin in 0..CAP {
+            assert_eq!(g.register_fast((2, begin, 1), CAP), Registered::Queued);
+        }
+        assert_eq!(g.register_fast((3, 0, 16384), CAP), Registered::Full);
+        g.set_choked(true);
+        assert_eq!(g.register_fast((3, 0, 16384), CAP), Registered::Choked);
+    }
+
+    #[test]
+    fn allowed_fast_blocks_bypass_the_choke_once_and_survive_it() {
+        let g = UploadGate::default();
+        g.set_fast(true);
+        g.offer_allowed_fast(vec![2]);
+        assert!(g.allowed_fast_decided());
+        let k = (2, 0, 16384);
+        assert_eq!(g.register_fast(k, CAP), Registered::QueuedAllowedFast);
+        assert_eq!(
+            g.register_fast((3, 0, 16384), CAP),
+            Registered::Choked,
+            "not in the set"
+        );
+        // A choke (we were choked already: the choker re-chokes on a rechoke) keeps it.
+        assert!(g.set_choked(true).is_empty());
+        assert_eq!(g.queued.load(Ordering::Relaxed), 1);
+        let chunk = lengths()
+            .chunk_info_from_received_data(lengths().validate_piece_index(2).unwrap(), 0, 16384)
+            .unwrap();
+        assert!(g.should_upload(&chunk));
+        assert_eq!(
+            g.register_fast(k, CAP),
+            Registered::Choked,
+            "a block of the set is served once while choked"
+        );
+    }
+
+    #[test]
+    fn allowed_fast_blocks_need_a_clean_verdict() {
+        let g = UploadGate::default();
+        g.set_fast(true);
+        g.offer_allowed_fast(vec![5]);
+        assert_eq!(
+            g.register_fast((5, 0, 16384), CAP),
+            Registered::QueuedAllowedFast
+        );
+        g.raise(PeerVerdict::Throttle);
+        assert_eq!(
+            g.register_fast((5, 16384, 16384), CAP),
+            Registered::Choked,
+            "a throttled peer does not get past the choke"
+        );
+        // Nor does what it queued before survive the next choke.
+        assert_eq!(g.set_choked(true), vec![(5, 0, 16384)]);
+    }
+
+    #[test]
+    fn announce_choked_queues_the_choke_before_its_rejects() {
+        let g = fast_unchoked();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        assert_eq!(g.register_fast((0, 0, 16384), CAP), Registered::Queued);
+        assert!(g.announce_choked(true, &tx));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WriterRequest::Message(Message::Choke))
+        ));
+        assert_eq!(rejects_sent(&mut rx), vec![(0, 0, 16384)]);
+        assert!(g.announce_choked(false, &tx));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WriterRequest::Message(Message::Unchoke))
+        ));
+        drop(rx);
+        assert!(!g.announce_choked(true, &tx), "the peer is gone");
+    }
+
+    #[test]
+    fn drop_all_rejects_allowed_fast_requests_too() {
+        let g = UploadGate::default();
+        g.set_fast(true);
+        g.offer_allowed_fast(vec![5]);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        assert_eq!(
+            g.register_fast((5, 0, 16384), CAP),
+            Registered::QueuedAllowedFast
+        );
+        assert!(g.drop_all(&tx));
+        assert_eq!(rejects_sent(&mut rx), vec![(5, 0, 16384)]);
+        assert_eq!(g.queued.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn rejects_on_arrival_are_unbounded_right_after_a_choke_then_capped() {
+        let g = fast_unchoked();
+        let t0 = Instant::now();
+        g.choke_locked(&mut g.pending.lock(), true, t0);
+        for _ in 0..crate::fast::MAX_REJECTS_PER_CHOKE * 2 {
+            assert!(g.take_reject(t0), "in transit before the choke");
+        }
+        let later = t0 + crate::fast::CHOKE_REJECT_GRACE;
+        for _ in 0..crate::fast::MAX_REJECTS_PER_CHOKE {
+            assert!(g.take_reject(later));
+        }
+        assert!(!g.take_reject(later), "past the cap");
+        // An unchoke starts the budget over.
+        g.choke_locked(&mut g.pending.lock(), false, later);
+        assert!(g.take_reject(later));
     }
 
     #[test]

@@ -25,13 +25,18 @@ pub(crate) const ALLOWED_FAST_K: u32 = 10;
 /// valid, each of its blocks is served once while the peer is choked.
 pub(crate) const ALLOWED_FAST_MAX_PEER_PIECES: u32 = ALLOWED_FAST_K;
 
-/// Rejects sent per choke period (the budget is renewed whenever we choke or unchoke the peer)
-/// for requests we turn down on arrival: the peer is choked, its queue is full, or we do not
-/// have the piece. Past it such requests are dropped silently: a peer could otherwise keep the
-/// connection busy by asking for rejects forever. libtorrent caps the same flood. Rejects for
-/// requests we had accepted (dropped by a choke, cancelled) are not counted: those are bounded
-/// by the upload queue.
-pub(crate) const MAX_REJECTS_PER_CHOKE: u32 = 100;
+/// After we choke a peer, every request we turn down on arrival is rejected for this long,
+/// however many: the peer sent them before the choke reached it, up to `reqq` of them, and a
+/// fast peer far away has many in transit.
+pub(crate) const CHOKE_REJECT_GRACE: Duration = Duration::from_secs(2);
+
+/// Requests we turn down on arrival (the peer is choked, its queue is full, or we do not have
+/// the piece) that are rejected between two chokes, unchokes or served blocks, outside of the
+/// [`CHOKE_REJECT_GRACE`]. The advertised `reqq`: a peer that keeps no more requests in flight
+/// than we allow never gets there. Past it the connection is closed. BEP 6 wants every request
+/// answered, so dropping them silently is not an option, and answering without end would let
+/// a peer that does not read grow our write queue without bound.
+pub(crate) const MAX_REJECTS_PER_CHOKE: u32 = crate::upload_gate::MAX_QUEUED_UPLOADS_PER_PEER;
 
 /// Allowed-fast indexes remembered from one peer. *k* is 10; the cap only bounds a peer that
 /// sends the message without end.

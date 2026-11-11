@@ -1233,34 +1233,14 @@ struct PeerUpload {
 
 impl ChokerPeer for PeerUpload {
     fn set_choked(&self, choked: bool) {
-        // The gate first: once the peer reads the message, our side has to agree with it.
-        let dropped = self.gate.set_choked(choked);
-        let msg = if choked {
-            Message::Choke
-        } else {
-            Message::Unchoke
-        };
-        if self.tx.send(WriterRequest::Message(msg)).is_err() {
+        // The gate decides and queues the message (and, with the Fast Extension, a reject for
+        // every request the choke dropped, BEP 6) under its lock, so the peer reads the choke
+        // before any reject it explains, and the writer serves none of the dropped requests.
+        if !self.gate.announce_choked(choked, &self.tx) {
             trace!(
                 "peer is gone, not sending {}",
                 if choked { "choke" } else { "unchoke" }
             );
-            return;
-        }
-        // With the Fast Extension every request is answered (BEP 6): what the choke dropped is
-        // rejected, after the choke, so the peer reads them in that order. The gate took the
-        // requests out, so the writer will not serve any of them.
-        if self.gate.is_fast() {
-            for (index, begin, length) in dropped {
-                let reject = Message::RejectRequest(Request {
-                    index,
-                    begin,
-                    length,
-                });
-                if self.tx.send(WriterRequest::Message(reject)).is_err() {
-                    return;
-                }
-            }
         }
     }
 
@@ -1993,6 +1973,11 @@ impl PeerHandler {
             _ => return Ok(()),
         };
         self.choker.set_class(class, Instant::now());
+        // A peer without a slot is choked already, so the choker leaves its queue alone: the
+        // allowed-fast requests in it would still be served.
+        if class == SlotClass::Barred && !self.policy.gate().drop_all(&self.tx) {
+            return Err(Error::PeerTaskDead.into());
+        }
         Ok(())
     }
 
@@ -2273,15 +2258,17 @@ impl PeerHandler {
         Ok(())
     }
 
-    /// Rejects a request we turn down as it arrives, within the budget of the choke period
-    /// (see [`fast::MAX_REJECTS_PER_CHOKE`]); past it the request is dropped without an answer.
+    /// Rejects a request we turn down as it arrives. A peer that keeps asking for what it is
+    /// refused past [`fast::MAX_REJECTS_PER_CHOKE`] is disconnected: BEP 6 wants every request
+    /// answered, and answering without end would let it fill our write queue.
     fn reject_on_arrival(&self, request: Request) -> anyhow::Result<()> {
-        if self.policy.gate().take_reject() {
-            self.send_reject(request)
-        } else {
-            trace!(?request, "reject budget spent, dropping the request");
-            Ok(())
+        if !self.policy.gate().take_reject(Instant::now()) {
+            anyhow::bail!(
+                "the peer sent more than {} requests we had to reject",
+                fast::MAX_REJECTS_PER_CHOKE
+            );
         }
+        self.send_reject(request)
     }
 
     async fn wait_for_any_notify(&self, notify: &Notify, check: impl Fn() -> bool) {
