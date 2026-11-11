@@ -64,7 +64,7 @@ async fn e2e_download_duplicate_pad_filenames() -> anyhow::Result<()> {
             dht: None,
             listen: Some(ListenerOptions {
                 mode: ListenerMode::TcpOnly,
-                listen_addr: (Ipv4Addr::LOCALHOST, 15177).into(),
+                listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 ..Default::default()
             }),
             disable_local_service_discovery: true,

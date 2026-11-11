@@ -38,6 +38,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::Session;
+use crate::choker::UploadSlots;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
@@ -113,11 +114,16 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_connect_timeout: Option<Duration>,
     pub peer_read_write_timeout: Option<Duration>,
     pub peer_max_request_window: Option<usize>,
+    /// Session-wide: do not advertise the Fast Extension (BEP 6).
+    pub disable_fast_extension: bool,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    /// Per-peer admission / upload policy installed on the session.
+    pub peer_policy: Option<Arc<dyn crate::PeerPolicy>>,
+    pub upload_slots: UploadSlots,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }

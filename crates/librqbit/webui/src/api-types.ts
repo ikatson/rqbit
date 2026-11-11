@@ -86,6 +86,7 @@ export interface PeerStats {
   state: string;
   conn_kind: ConnectionKind | null;
   client_name: string | null;
+  fast_extension: boolean;
 }
 
 export interface PeerStatsSnapshot {

@@ -45,6 +45,28 @@ pub trait PeerConnectionHandler {
     async fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()>;
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
+    /// Asked right before an accepted upload request is read from disk. `false` skips it: the
+    /// peer cancelled it, or the connection was choked or disconnected meanwhile.
+    fn should_upload_chunk(&self, _chunk: &ChunkInfo) -> bool {
+        true
+    }
+    /// The first message of a connection on which the Fast Extension (BEP 6) was negotiated:
+    /// exactly one of HaveAll, HaveNone or Bitfield. The default is HaveNone, which is what a
+    /// peer with no pieces (the metadata reader) sends.
+    fn serialize_fast_opening(&self, buf: &mut [u8]) -> anyhow::Result<usize> {
+        Ok(Message::HaveNone.serialize(buf, &Default::default)?)
+    }
+    /// The block was written to the socket. An error closes the connection.
+    fn on_uploaded_chunk(&self, _chunk: &ChunkInfo) -> anyhow::Result<()> {
+        Ok(())
+    }
+    /// Asked while the peer sends nothing. `true` excuses the silence: right now the peer has
+    /// nothing to tell us, so only keep-alives are due ([`SILENT_PEER_TIMEOUT`]). The read
+    /// timeout only runs while the silence is not excused. Asked at least once every half read
+    /// timeout of silence, so a handler may also use it to give up waiting for something.
+    fn may_be_silent(&self) -> bool {
+        false
+    }
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
     fn update_my_extended_handshake(
         &self,
@@ -83,6 +105,10 @@ pub struct PeerConnectionOptions {
     /// one at a stream's read position after a seek, is requested only after
     /// those, so a smaller window makes streams react faster to seeks.
     pub max_request_window: Option<usize>,
+    /// Do not advertise the Fast Extension (BEP 6) in our handshake. Default off, so a session
+    /// written by a previous version keeps today's behaviour.
+    #[serde(default)]
+    pub disable_fast_extension: bool,
 }
 
 pub(crate) struct PeerConnection<H> {
@@ -116,8 +142,18 @@ pub(crate) async fn with_timeout<T>(
     fut.await
 }
 
+/// How long a peer that has nothing to tell us ([`PeerConnectionHandler::may_be_silent`]) may
+/// send nothing at all before its connection is taken for dead. Clients send a keep-alive every
+/// two minutes or so (BEP 3).
+pub(crate) const SILENT_PEER_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The read / write timeout when [`PeerConnectionOptions::read_write_timeout`] is not set.
+pub(crate) const DEFAULT_READ_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
 struct ManagePeerArgs {
     handshake_supports_extended: bool,
+    // Both handshakes carried the Fast Extension bit (BEP 6).
+    fast: bool,
     read_buf: ReadBuf,
     write_buf: Box<[u8; MAX_MSG_LEN]>,
     read: BoxAsyncReadVectored,
@@ -160,7 +196,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let rwtimeout = self
             .options
             .read_write_timeout
-            .unwrap_or_else(|| Duration::from_secs(10));
+            .unwrap_or(DEFAULT_READ_WRITE_TIMEOUT);
 
         if incoming.handshake.info_hash != self.info_hash {
             return Err(Error::WrongInfoHash);
@@ -176,7 +212,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         );
 
         let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
-        let my_handshake = Handshake::new(self.info_hash, self.peer_id);
+        let mut my_handshake = Handshake::new(self.info_hash, self.peer_id);
+        my_handshake.set_supports_fast(!self.options.disable_fast_extension);
         let hlen = my_handshake.serialize_unchecked_len(&mut *write_buf);
         with_timeout(
             "writing handshake",
@@ -190,6 +227,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         // What the peer supports is in the peer's handshake, not in ours.
         let handshake_supports_extended = incoming.handshake.supports_extended();
+        let fast = !self.options.disable_fast_extension && incoming.handshake.supports_fast();
 
         self.handler
             .on_handshake(incoming.handshake, incoming.kind)
@@ -197,6 +235,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         self.manage_peer(ManagePeerArgs {
             handshake_supports_extended,
+            fast,
             read_buf: incoming.read_buf,
             write_buf,
             read: incoming.reader,
@@ -216,7 +255,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let rwtimeout = self
             .options
             .read_write_timeout
-            .unwrap_or_else(|| Duration::from_secs(10));
+            .unwrap_or(DEFAULT_READ_WRITE_TIMEOUT);
 
         let connect_timeout = self
             .options
@@ -235,7 +274,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             self.handler.on_connected(now.elapsed());
 
             let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
-            let handshake = Handshake::new(self.info_hash, self.peer_id);
+            let mut handshake = Handshake::new(self.info_hash, self.peer_id);
+            handshake.set_supports_fast(!self.options.disable_fast_extension);
             let hsz = handshake.serialize_unchecked_len(&mut *write_buf);
             with_timeout(
                 "writing",
@@ -249,6 +289,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             let mut read_buf = ReadBuf::new();
             let h = read_buf.read_handshake(&mut read, rwtimeout).await?;
             let handshake_supports_extended = h.supports_extended();
+            let fast = !self.options.disable_fast_extension && h.supports_fast();
             trace!(
                 peer_id=?h.peer_id,
                 decoded_id=?try_decode_peer_id(h.peer_id),
@@ -266,6 +307,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
             self.manage_peer(ManagePeerArgs {
                 handshake_supports_extended,
+                fast,
                 read_buf,
                 write_buf,
                 read,
@@ -282,6 +324,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
     async fn manage_peer(&self, args: ManagePeerArgs) -> Result<()> {
         let ManagePeerArgs {
             handshake_supports_extended,
+            fast,
             mut read_buf,
             mut write_buf,
             mut read,
@@ -295,11 +338,27 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let rwtimeout = self
             .options
             .read_write_timeout
-            .unwrap_or_else(|| Duration::from_secs(10));
+            .unwrap_or(DEFAULT_READ_WRITE_TIMEOUT);
 
         let extended_handshake: RwLock<Option<PeerExtendedMessageIds>> = RwLock::new(None);
         let extended_handshake_ref = &extended_handshake;
         let supports_extended = handshake_supports_extended;
+
+        // With the Fast Extension the first message after the handshake is exactly one of
+        // HaveAll, HaveNone or Bitfield (BEP 6), so it goes out before the extended handshake.
+        if fast {
+            let len = self
+                .handler
+                .serialize_fast_opening(&mut *write_buf)
+                .map_err(Error::Anyhow)?;
+            with_timeout(
+                "writing have-state",
+                rwtimeout,
+                write.write_all(&write_buf[..len]).map_err(Error::Write),
+            )
+            .await?;
+            trace!("sent have-state");
+        }
 
         if supports_extended {
             let mut my_extended = ExtendedHandshake::new();
@@ -325,7 +384,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 .keep_alive_interval
                 .unwrap_or_else(|| Duration::from_secs(120));
 
-            if self.handler.should_send_bitfield() {
+            // Without the Fast Extension a bitfield goes out only when we have something.
+            if !fast && self.handler.should_send_bitfield() {
                 let len = self
                     .handler
                     .serialize_bitfield_message_to_buf(&mut *write_buf)
@@ -338,15 +398,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 .await?;
                 trace!("sent bitfield");
             }
-
-            let len = Message::Unchoke.serialize(&mut *write_buf, &Default::default)?;
-            with_timeout(
-                "writing",
-                rwtimeout,
-                write.write_all(&write_buf[..len]).map_err(Error::Write),
-            )
-            .await?;
-            trace!("sent unchoke");
 
             let mut broadcast_closed = false;
 
@@ -380,7 +431,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                 tokio::task::yield_now().await;
 
-                let mut uploaded_add = None;
+                let mut uploaded = None;
 
                 trace!("about to send: {:?}", &req);
                 let ext_msg_ids = &|| {
@@ -402,6 +453,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             .serialize(&mut *write_buf, ext_msg_ids)?
                     }
                     WriterRequest::ReadChunkRequest(chunk) => {
+                        if !self.handler.should_upload_chunk(&chunk) {
+                            continue;
+                        }
                         #[allow(unused_mut)]
                         let mut skip_reading_for_e2e_tests = false;
 
@@ -446,7 +500,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                                 .map_err(Error::ReadChunk)?;
                         }
 
-                        uploaded_add = Some(chunk.size);
+                        uploaded = Some(chunk);
                         full_len
                     }
                     WriterRequest::Disconnect(res) => {
@@ -465,8 +519,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 )
                 .await?;
 
-                if let Some(uploaded_add) = uploaded_add {
-                    self.handler.on_uploaded_bytes(uploaded_add)
+                if let Some(chunk) = uploaded {
+                    self.handler.on_uploaded_bytes(chunk.size);
+                    self.handler
+                        .on_uploaded_chunk(&chunk)
+                        .map_err(Error::Anyhow)?;
                 }
             }
 
@@ -476,9 +533,62 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         };
 
         let reader = async move {
+            // The peer is given up on when it sent nothing for the read timeout without an
+            // excuse. An excuse can end at any moment (the peer gets an upload slot, or
+            // unchokes us), and the silence counts against the peer from then on only, so the
+            // handler is asked twice within the timeout rather than once at its end.
+            let patience = rwtimeout / 2;
+            let mut heard_at = Instant::now();
+            let mut excused_at = heard_at;
+            // With the Fast Extension the peer's piece set arrives as exactly one HaveAll,
+            // HaveNone or Bitfield, before anything that depends on it (BEP 6). Keep-alives and
+            // extended messages may come first: several clients send their extended handshake
+            // before the bitfield, and nothing in them refers to pieces. A peer that sends no
+            // have-state at all is taken to have nothing, as without the extension; real
+            // clients that skip it exist and are harmless.
+            let mut have_state_open = fast;
             loop {
-                let message = read_buf.read_message(&mut read, rwtimeout).await?;
+                let message = match read_buf.read_message(&mut read, patience).await {
+                    Err(Error::Timeout(name)) => {
+                        let now = Instant::now();
+                        if self.handler.may_be_silent() {
+                            excused_at = now;
+                        }
+                        if now.duration_since(excused_at.max(heard_at)) < rwtimeout
+                            && now.duration_since(heard_at) < SILENT_PEER_TIMEOUT
+                        {
+                            continue;
+                        }
+                        return Err(Error::Timeout(name));
+                    }
+                    r => r?,
+                };
+                heard_at = Instant::now();
                 trace!("received: {:?}", &message);
+
+                if !fast && message.is_fast_extension() {
+                    return Err(Error::DisconnectWithSource(anyhow::anyhow!(
+                        "peer sent {message:?}, but the Fast Extension was not negotiated"
+                    )));
+                }
+                if fast {
+                    let have_state = match &message {
+                        Message::Bitfield(_) => Some("Bitfield"),
+                        Message::HaveAll => Some("HaveAll"),
+                        Message::HaveNone => Some("HaveNone"),
+                        _ => None,
+                    };
+                    if let Some(name) = have_state {
+                        if !have_state_open {
+                            return Err(Error::DisconnectWithSource(anyhow::anyhow!(
+                                "peer sent {name} after its first message"
+                            )));
+                        }
+                        have_state_open = false;
+                    } else if !matches!(message, Message::KeepAlive | Message::Extended(_)) {
+                        have_state_open = false;
+                    }
+                }
 
                 tokio::task::yield_now().await;
 

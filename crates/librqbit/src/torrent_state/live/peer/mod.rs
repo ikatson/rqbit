@@ -280,6 +280,9 @@ pub(crate) struct LivePeerState {
     pub tx: PeerTx,
 
     pub connection_kind: ConnectionKind,
+
+    // Both handshakes carried the Fast Extension bit (BEP 6).
+    pub fast_extension: bool,
 }
 
 impl LivePeerState {
@@ -300,6 +303,7 @@ impl LivePeerState {
             request_slots_changed: Default::default(),
             tx,
             connection_kind,
+            fast_extension: false,
         }
     }
 
@@ -356,6 +360,20 @@ impl LivePeerState {
         if self.inflight_requests.len() != before {
             self.request_slots_changed.notify_waiters();
         }
+    }
+
+    /// The peer choked us, which voids everything we asked it for (BEP 3). Returns how many
+    /// requests that was. A block that was on its way already may still arrive.
+    pub fn forget_inflight_requests(&mut self) -> usize {
+        let forgotten = self.inflight_requests.len();
+        self.inflight_requests.clear();
+        self.late_cancelled_request_tolerance = self
+            .late_cancelled_request_tolerance
+            .saturating_add(u32::try_from(forgotten).unwrap_or(u32::MAX));
+        if forgotten > 0 {
+            self.request_slots_changed.notify_waiters();
+        }
+        forgotten
     }
 
     pub fn inflight_requests(&self) -> impl Iterator<Item = &InflightRequest> {

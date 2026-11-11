@@ -193,6 +193,7 @@ Use a regex here to select files by their names.
 - mDNS advertising
 - Fastresume (no rehashing)
 - Download / upload rate limiting
+- Upload slots (choking): uploads go to the peers that give or take the most, with optimistic unchokes (`--upload-slots`, `SessionOptions::upload_slots`)
 - Prometheus metrics at ```/metrics``` and ```/torrents/<id_or_infohash>/peer_stats/prometheus```
 
 ## HTTP API

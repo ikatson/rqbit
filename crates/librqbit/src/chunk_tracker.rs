@@ -248,6 +248,11 @@ impl ChunkTracker {
             .filter_map(|id| self.lengths.validate_piece_index(id))
     }
 
+    /// Pieces to download next: selected, not had, not in flight.
+    pub(crate) fn queued_pieces(&self) -> &BS {
+        &self.queue_pieces
+    }
+
     pub(crate) fn is_piece_have(&self, id: ValidPieceIndex) -> bool {
         self.have.as_slice()[id.get() as usize]
     }

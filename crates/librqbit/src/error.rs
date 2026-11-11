@@ -109,9 +109,6 @@ pub enum Error {
     #[error("bug: peer not found")]
     BugPeerNotFound,
 
-    #[error("bug: invalid peer state")]
-    BugInvalidPeerState,
-
     #[error("file is None, torrent was probably paused")]
     FsFileIsNone,
 
