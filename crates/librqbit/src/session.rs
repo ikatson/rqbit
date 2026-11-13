@@ -21,7 +21,7 @@ use crate::{
     dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
     ip_ranges::IpRanges,
     limits::{Limits, LimitsConfig},
-    listen::{Accept, ListenerOptions},
+    listen::{Accept, ListenResult, ListenerOptions},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
@@ -63,6 +63,9 @@ use librqbit_core::{
     torrent_metainfo::{TorrentMetaV1Owned, ValidatedTorrentMetaV1Info},
 };
 use librqbit_lsd::{LocalServiceDiscovery, LocalServiceDiscoveryOptions};
+use librqbit_upnp::{
+    PortMapper, PortMappingMethods, PortMappingOptions, PortMappingProtocol, PortMappingStatus,
+};
 use librqbit_utp::BindDevice;
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
@@ -151,6 +154,16 @@ pub struct Session {
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
     client_name_and_version: String,
+    port_mapper: Option<SessionPortMapper>,
+}
+
+/// The port mapper of a session and what [`Session::stop`] needs to wait for it.
+struct SessionPortMapper {
+    mapper: PortMapper,
+    /// Cancelled when the mapper task has deleted the mappings and returned.
+    stopped: CancellationToken,
+    /// How long [`Session::stop`] waits for that: the mapper's own deletion bound plus slack.
+    stop_timeout: Duration,
 }
 
 /// A 40 character hex string is a v1 info hash. Checking the length alone
@@ -595,7 +608,7 @@ impl Session {
                 None => None,
             };
 
-            let listen_result = if let Some(listen_opts) = opts.listen.take() {
+            let mut listen_result = if let Some(listen_opts) = opts.listen.take() {
                 Some(
                     listen_opts
                         .start(
@@ -784,6 +797,15 @@ impl Session {
                 }
             };
 
+            let port_mapper = listen_result.as_mut().and_then(|listen| {
+                Self::make_port_mapper(
+                    listen,
+                    dht.as_ref(),
+                    &client_name_and_version,
+                    bind_device.clone(),
+                )
+            });
+
             let session = Arc::new(Self {
                 persistence,
                 bitv_factory,
@@ -819,6 +841,7 @@ impl Session {
                 blocklist,
                 allowlist,
                 lsd,
+                port_mapper,
             });
 
             if let Some(mut listen) = listen_result {
@@ -852,15 +875,20 @@ impl Session {
                         },
                     );
                 }
-                if listen.enable_upnp_port_forwarding
-                    && let Some(announce_port) = listen.announce_port
-                {
-                    info!(port = announce_port, "starting UPnP port forwarder");
-                    let bind_device = bind_device.clone();
-                    session.spawn(
-                        debug_span!(parent: session.rs(), "upnp_forward", port = announce_port),
-                        "upnp_forward",
-                        Self::task_upnp_port_forwarder(announce_port, bind_device),
+                if let Some(pm) = session.port_mapper.as_ref() {
+                    let mapper = pm.mapper.clone();
+                    let stopped = pm.stopped.clone();
+                    let shutdown = session.cancellation_token.clone().cancelled_owned();
+                    // Not `session.spawn`: that drops the future on cancellation, and the mapper
+                    // needs to run after it to delete the mappings on the routers.
+                    librqbit_core::spawn_utils::spawn(
+                        debug_span!(parent: session.rs(), "port_mapper"),
+                        "port_mapper",
+                        async move {
+                            let _stopped = stopped.drop_guard();
+                            mapper.run(shutdown).await;
+                            Ok::<_, anyhow::Error>(())
+                        },
                     );
                 }
             }
@@ -1020,12 +1048,48 @@ impl Session {
         }
     }
 
-    async fn task_upnp_port_forwarder(
-        port: u16,
+    /// Builds the port mapper for the ports the session listens on, if any method is enabled:
+    /// the TCP listen port, the UDP port of the same number when uTP is on, and the DHT port.
+    /// The internal port is the one we are bound to; `announce_port` is not involved.
+    fn make_port_mapper(
+        listen: &mut ListenResult,
+        dht: Option<&Dht>,
+        client_name_and_version: &str,
         bind_device: Option<BindDevice>,
-    ) -> anyhow::Result<()> {
-        let pf = librqbit_upnp::UpnpPortForwarder::new(vec![port], None, bind_device)?;
-        pf.run_forever().await
+    ) -> Option<SessionPortMapper> {
+        let methods = PortMappingMethods {
+            upnp: listen.enable_upnp_port_forwarding,
+            natpmp: listen.enable_natpmp_port_forwarding,
+        };
+        if !methods.upnp && !methods.natpmp {
+            return None;
+        }
+        let port = listen.addr.port();
+        let ports = [
+            listen
+                .tcp_socket
+                .is_some()
+                .then_some((PortMappingProtocol::Tcp, port)),
+            listen
+                .utp_socket
+                .is_some()
+                .then_some((PortMappingProtocol::Udp, port)),
+            dht.map(|dht| (PortMappingProtocol::Udp, dht.listen_addr().port())),
+        ];
+        let opts = listen
+            .port_mapping
+            .take()
+            .unwrap_or_else(|| PortMappingOptions {
+                description: client_name_and_version.to_owned(),
+                ..Default::default()
+            });
+        info!(?ports, ?methods, "starting port mapper");
+        let stop_timeout = opts.shutdown_timeout.saturating_add(Duration::from_secs(1));
+        Some(SessionPortMapper {
+            mapper: PortMapper::new(ports.into_iter().flatten(), methods, opts, bind_device),
+            stopped: CancellationToken::new(),
+            stop_timeout,
+        })
     }
 
     pub fn get_dht(&self) -> Option<&Dht> {
@@ -1081,8 +1145,22 @@ impl Session {
             }
         }
         self.cancellation_token.cancel();
+        // The port mapper deletes the mappings on the routers; wait for it, bounded.
+        let port_mapper_stopped = async {
+            if let Some(pm) = self.port_mapper.as_ref()
+                && tokio::time::timeout(pm.stop_timeout, pm.stopped.cancelled())
+                    .await
+                    .is_err()
+            {
+                warn!("port mapper did not stop in {:?}", pm.stop_timeout);
+            }
+        };
         // this sucks, but hopefully will be enough
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        futures::future::join(
+            tokio::time::sleep(Duration::from_secs(1)),
+            port_mapper_stopped,
+        )
+        .await;
     }
 
     /// Run a callback given the currently managed torrents.
@@ -1650,6 +1728,22 @@ impl Session {
 
     pub fn announce_port(&self) -> Option<u16> {
         self.announce_port
+    }
+
+    /// Where the router port mappings of the session stand: one row per `(protocol, internal
+    /// port)` among the TCP listen port, the uTP UDP port and the DHT UDP port, sorted by protocol
+    /// then port. Empty when port mapping is off (see
+    /// [`ListenerOptions::enable_upnp_port_forwarding`](crate::ListenerOptions) and
+    /// `enable_natpmp_port_forwarding`).
+    ///
+    /// When several methods mapped a port, the row reports the first of UPnP, PCP, NAT-PMP.
+    /// The external port may differ from the internal one when the router picked another;
+    /// [`Session::announce_port`] still announces the internal one.
+    pub fn port_mappings(&self) -> Vec<PortMappingStatus> {
+        self.port_mapper
+            .as_ref()
+            .map(|pm| pm.mapper.status())
+            .unwrap_or_default()
     }
 
     async fn resolve_magnet(

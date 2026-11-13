@@ -9,6 +9,11 @@ documentation = "https://docs.rs/librqbit-upnp"
 repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
+[features]
+# Fake NAT-PMP / PCP gateway and fake UPnP internet gateway device, for tests of crates that
+# use the port mapper.
+test-util = ["tokio/rt", "tokio/io-util"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -17,7 +22,7 @@ anyhow.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "net", "sync", "time"] }
 futures.workspace = true
 url.workspace = true
 network-interface.workspace = true
@@ -28,5 +33,5 @@ librqbit-dualstack-sockets.workspace = true
 socket2.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }

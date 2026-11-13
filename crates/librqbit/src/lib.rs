@@ -89,6 +89,9 @@ pub use api_error::{ApiError, WithStatus, WithStatusError};
 pub use create_torrent_file::{CreateTorrentOptions, CreateTorrentResult, create_torrent};
 pub use dht;
 pub use librqbit_core::spawn_utils::spawn as librqbit_spawn;
+pub use librqbit_upnp::{
+    PortMappingMethod, PortMappingOptions, PortMappingProtocol, PortMappingState, PortMappingStatus,
+};
 pub use listen::{ListenerMode, ListenerOptions};
 pub use peer_connection::PeerConnectionOptions;
 pub use session::{
