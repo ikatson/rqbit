@@ -193,6 +193,26 @@ pub(crate) fn local_addresses(
         .collect()
 }
 
+/// The IPv4 addresses to send SSDP searches from, one socket per address that multicasts out of
+/// its interface: the private (RFC 1918) and link-local addresses of every interface but
+/// loopback, without duplicates. The default multicast route alone is not enough, as a VPN or a
+/// TUN proxy (Clash, sing-box: 198.18.0.0/15) that owns it never delivers the search to the
+/// router of the local network. Public addresses are left out for the reason given in
+/// [`gateway_candidates`].
+pub(crate) fn ssdp_sources(interfaces: &[NetworkInterface]) -> Vec<Ipv4Addr> {
+    let mut seen = HashSet::new();
+    interfaces
+        .iter()
+        .filter(|i| !i.internal)
+        .flat_map(|i| i.addr.iter())
+        .filter_map(|a| match a {
+            Addr::V4(a) if a.ip.is_private() || a.ip.is_link_local() => Some(a.ip),
+            _ => None,
+        })
+        .filter(|ip| seen.insert(*ip))
+        .collect()
+}
+
 /// A candidate that answered the probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FoundGateway {
@@ -444,6 +464,38 @@ mod tests {
             ]
         );
         assert!(gateway_candidates(&[], &[], &[], None).is_empty());
+    }
+
+    #[test]
+    fn test_ssdp_sources() {
+        let mask24 = Some(Ipv4Addr::new(255, 255, 255, 0));
+        let iface = |name: &str, ip: Ipv4Addr, index: u32, internal: bool| {
+            NetworkInterface::new_afinet(name, ip, mask24, None, index, internal)
+        };
+        let mut wifi = iface("en0", Ipv4Addr::new(192, 168, 1, 37), 4, false);
+        wifi.addr.push(Addr::V6(network_interface::V6IfAddr {
+            ip: "fd00::1".parse().unwrap(),
+            broadcast: None,
+            netmask: None,
+        }));
+        let interfaces = vec![
+            iface("lo0", Ipv4Addr::LOCALHOST, 1, true),
+            // The TUN interface of a proxy owns the default route: never searched from.
+            iface("utun4", Ipv4Addr::new(198, 18, 0, 1), 2, false),
+            wifi,
+            iface("en1", Ipv4Addr::new(8, 8, 4, 4), 5, false),
+            iface("en2", Ipv4Addr::new(169, 254, 3, 7), 6, false),
+            // Same address listed twice (an alias): one search.
+            iface("en0", Ipv4Addr::new(192, 168, 1, 37), 4, false),
+        ];
+        assert_eq!(
+            ssdp_sources(&interfaces),
+            vec![
+                Ipv4Addr::new(192, 168, 1, 37),
+                Ipv4Addr::new(169, 254, 3, 7)
+            ]
+        );
+        assert!(ssdp_sources(&[]).is_empty());
     }
 
     #[test]

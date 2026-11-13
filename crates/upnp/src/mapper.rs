@@ -29,7 +29,7 @@ use tracing::{Instrument, debug, debug_span, info, trace, warn};
 use url::Url;
 
 use crate::{
-    RootDesc, UpnpDiscoverResponse, discover_once, fetch_root_desc, gateway,
+    RootDesc, UpnpDiscoverResponse, discover_once, discover_once_from, fetch_root_desc, gateway,
     get_local_ip_relative_to,
     igd::{self, IgdService, SoapError},
     natpmp, pcp,
@@ -787,7 +787,10 @@ impl Inner {
         }
     }
 
-    /// One SSDP search for the three service types, or the configured locations.
+    /// One SSDP search for the three service types, along the default multicast route and out of
+    /// every local interface (see `gateway::ssdp_sources`), or the configured locations. The
+    /// same router answering several searches is reported once per answer; discovery keeps the
+    /// first answer of each location.
     async fn upnp_search(&self) -> Vec<UpnpDiscoverResponse> {
         if !self.opts.upnp_locations.is_empty() {
             return self
@@ -811,17 +814,34 @@ impl Inner {
                 .collect();
         }
         let (tx, mut rx) = unbounded_channel();
-        let searches = igd::WAN_SERVICE_TYPES.map(|st| {
-            discover_once(
-                &tx,
-                st,
-                self.opts.discover_timeout,
-                self.bind_device.as_ref(),
-            )
+        let timeout = self.opts.discover_timeout;
+        // A bound device already decides the interface.
+        let sources = if self.bind_device.is_some() {
+            Vec::new()
+        } else {
+            gateway::ssdp_sources(&self.interfaces())
+        };
+        let default_route = igd::WAN_SERVICE_TYPES
+            .map(|st| discover_once(&tx, st, timeout, self.bind_device.as_ref()));
+        let per_interface = sources.iter().flat_map(|source| {
+            let tx = &tx;
+            igd::WAN_SERVICE_TYPES.map(|st| async move {
+                (*source, discover_once_from(tx, st, timeout, *source).await)
+            })
         });
-        for r in futures::future::join_all(searches).await {
+        let (default_route, per_interface) = futures::future::join(
+            futures::future::join_all(default_route),
+            futures::future::join_all(per_interface),
+        )
+        .await;
+        for r in default_route {
             if let Err(e) = r {
                 warn!("failed to run SSDP discovery: {e:#}");
+            }
+        }
+        for (source, r) in per_interface {
+            if let Err(e) = r {
+                debug!(%source, "failed to run SSDP discovery: {e:#}");
             }
         }
         drop(tx);

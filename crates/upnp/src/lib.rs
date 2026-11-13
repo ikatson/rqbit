@@ -232,6 +232,8 @@ pub fn parse_upnp_discover_response(
     })
 }
 
+/// Sends one SSDP search along the default multicast route (or out of `bind_device`) and reports
+/// every answer received within `timeout`.
 pub async fn discover_once(
     tx: &UnboundedSender<UpnpDiscoverResponse>,
     kind: &str,
@@ -246,7 +248,34 @@ pub async fn discover_once(
             ..Default::default()
         },
     )?;
+    search(socket.socket(), tx, kind, timeout).await
+}
 
+/// Like [`discover_once`], but searches through the interface that owns `source`: the socket is
+/// bound to that address and multicasts out of its interface (`IP_MULTICAST_IF`), whatever the
+/// default multicast route is. A VPN or a TUN proxy that owns the default route never delivers
+/// the search to the router of the local network.
+pub async fn discover_once_from(
+    tx: &UnboundedSender<UpnpDiscoverResponse>,
+    kind: &str,
+    timeout: Duration,
+    source: Ipv4Addr,
+) -> anyhow::Result<()> {
+    let socket = tokio::net::UdpSocket::bind((source, 0))
+        .await
+        .with_context(|| format!("failed to bind an SSDP socket to {source}"))?;
+    socket2::SockRef::from(&socket)
+        .set_multicast_if_v4(&source)
+        .with_context(|| format!("failed to send multicast out of {source}"))?;
+    search(&socket, tx, kind, timeout).await
+}
+
+async fn search(
+    socket: &tokio::net::UdpSocket,
+    tx: &UnboundedSender<UpnpDiscoverResponse>,
+    kind: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
     let message = make_ssdp_search_request(kind);
     socket
         .send_to(message.as_bytes(), SSDP_MULTICAST_IP)
