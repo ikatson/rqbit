@@ -780,6 +780,10 @@ impl TorrentStateLive {
         // It should be impossible to make a fatal error after pausing.
         g.fatal_errors_tx.take();
 
+        // Pieces verified since the last periodic flush are only in memory.
+        // Save them now, so a restart doesn't download them again.
+        g.try_flush_bitv(&self.shared, false);
+
         let piece_tracker = g
             .pieces
             .take()
