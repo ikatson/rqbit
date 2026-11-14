@@ -1,4 +1,9 @@
-use std::{any::TypeId, collections::HashMap, path::PathBuf};
+use std::{
+    any::TypeId,
+    collections::HashMap,
+    path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crate::{
     api::TorrentIdOrHash,
@@ -30,6 +35,9 @@ pub struct JsonSessionPersistenceStore {
     output_folder: PathBuf,
     db_filename: PathBuf,
     db_content: tokio::sync::RwLock<SerializedSessionDatabase>,
+    // IDs must be allocated atomically, as torrents are only inserted into db_content
+    // after next_id() returns, so concurrent adds would otherwise get the same ID.
+    next_id: AtomicUsize,
     spawner: BlockingSpawner,
 }
 
@@ -62,10 +70,20 @@ impl JsonSessionPersistenceStore {
             }
         };
 
+        let db: SerializedSessionDatabase = db;
+        let next_id = db
+            .torrents
+            .keys()
+            .copied()
+            .max()
+            .map(|max| max + 1)
+            .unwrap_or(0);
+
         Ok(Self {
             db_filename,
             output_folder,
             db_content: tokio::sync::RwLock::new(db),
+            next_id: AtomicUsize::new(next_id),
             spawner,
         })
     }
@@ -242,16 +260,7 @@ impl BitVFactory for JsonSessionPersistenceStore {
 #[async_trait]
 impl SessionPersistenceStore for JsonSessionPersistenceStore {
     async fn next_id(&self) -> anyhow::Result<TorrentId> {
-        Ok(self
-            .db_content
-            .read()
-            .await
-            .torrents
-            .keys()
-            .copied()
-            .max()
-            .map(|max| max + 1)
-            .unwrap_or(0))
+        Ok(self.next_id.fetch_add(1, Ordering::Relaxed))
     }
 
     async fn delete(&self, id: TorrentId) -> anyhow::Result<()> {
