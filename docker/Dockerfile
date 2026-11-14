@@ -1,7 +1,7 @@
 # Depends on either outputs of Dockerfile.xx or the binaries compiled elsewhere.
 FROM scratch
 
-ADD https://curl.se/ca/cacert.pem /etc/ssl/cacerts.pem
+ADD --chmod=0644 https://curl.se/ca/cacert.pem /etc/ssl/cacerts.pem
 
 ARG TARGETPLATFORM
 
