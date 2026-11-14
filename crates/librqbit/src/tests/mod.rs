@@ -4,4 +4,5 @@ mod e2e_have;
 mod e2e_padded_files;
 mod e2e_stream;
 mod fake_peer;
+mod recheck;
 pub mod test_util;
