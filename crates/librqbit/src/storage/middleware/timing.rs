@@ -100,6 +100,10 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
         self.underlying.ensure_file_length(file_id, length)
     }
 
+    fn file_len(&self, file_id: usize) -> anyhow::Result<Option<u64>> {
+        self.underlying.file_len(file_id)
+    }
+
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         Ok(Box::new(TimingStorage {
             underlying: self.underlying.take()?,
