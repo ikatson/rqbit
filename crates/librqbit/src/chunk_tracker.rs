@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
 use buffers::ByteBuf;
@@ -23,9 +23,16 @@ pub struct ChunkTracker {
     // needed initial value = selected & !have
     queue_pieces: BF,
 
-    // This has a bit set per each chunk (block) that we have written to the output file.
-    // It doesn't mean it's valid yet. Used to track how much is left in each piece.
-    chunk_status: BF,
+    // Chunks (blocks) written to the output file, for pieces that are partly
+    // written, or fully written and waiting for their hash check. Written doesn't
+    // mean valid yet. A piece in "have" has all its chunks; any other piece that
+    // isn't here has none.
+    //
+    // Only in-flight pieces need per-chunk state, so this is kept sparse. A dense
+    // bitfield with one bit per chunk of the whole torrent costs total_size / 16 KiB
+    // bits whether or not anything is downloading: about 27 MB for a session
+    // seeding 3.5 TB.
+    chunk_status: HashMap<u32, BF>,
 
     // These are the pieces that we actually have, fully checked and downloaded.
     have: BoxBitV,
@@ -67,38 +74,6 @@ impl HaveNeededSelected {
     pub const fn finished(&self) -> bool {
         self.needed_bytes == 0
     }
-}
-
-// Compute the have-status of chunks.
-//
-// Save as "have_pieces", but there's one bit per chunk (not per piece).
-fn compute_chunk_have_status(lengths: &Lengths, have_pieces: &BS) -> anyhow::Result<BF> {
-    if have_pieces.len() < lengths.total_pieces() as usize {
-        anyhow::bail!(
-            "bug: have_pieces.len() < lengths.total_pieces(); {} < {}",
-            have_pieces.len(),
-            lengths.total_pieces()
-        );
-    }
-
-    let required_size = lengths.chunk_bitfield_bytes();
-    let vec = vec![0u8; required_size];
-    let mut chunk_bf = BF::from_boxed_slice(vec.into_boxed_slice());
-
-    for piece in lengths.iter_piece_infos() {
-        let chunks = lengths.chunks_per_piece(piece.piece_index) as usize;
-        let offset = (lengths.default_chunks_per_piece() * piece.piece_index.get()) as usize;
-        let range = offset..(offset + chunks);
-        if have_pieces[piece.piece_index.get() as usize] {
-            chunk_bf
-                .get_mut(range.clone())
-                .with_context(|| {
-                    format!("bug in bitvec: error getting range {range:?} from chunk_bf")
-                })?
-                .fill(true);
-        }
-    }
-    Ok(chunk_bf)
 }
 
 fn compute_queued_pieces_unchecked(have_pieces: &BS, selected_pieces: &BS) -> BF {
@@ -147,7 +122,7 @@ pub(crate) fn compute_selected_pieces(
     bf
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ChunkMarkingResult {
     PreviouslyCompleted,
     NotCompleted,
@@ -169,9 +144,16 @@ impl ChunkTracker {
         // TODO: ideally this needs to be a list based on needed files, e.g.
         // last needed piece for each file. But let's keep simple for now.
 
+        if have_pieces.as_slice().len() < lengths.total_pieces() as usize {
+            anyhow::bail!(
+                "bug: have_pieces.len() < lengths.total_pieces(); {} < {}",
+                have_pieces.as_slice().len(),
+                lengths.total_pieces()
+            );
+        }
+
         let mut ct = Self {
-            chunk_status: compute_chunk_have_status(&lengths, have_pieces.as_slice())
-                .context("error computing chunk status")?,
+            chunk_status: HashMap::new(),
             queue_pieces: needed_pieces,
             selected: selected_pieces,
             lengths,
@@ -264,9 +246,7 @@ impl ChunkTracker {
         }
         debug!("marking piece={} as broken", index);
         self.queue_pieces.set(index.get() as usize, true);
-        if let Some(s) = self.chunk_status.get_mut(self.lengths.chunk_range(index)) {
-            s.fill(false);
-        }
+        self.chunk_status.remove(&index.get());
     }
 
     pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
@@ -276,6 +256,8 @@ impl ChunkTracker {
         // its file - queued it. A piece we have is not one a peer should be handed, so
         // whatever queued it in that window is undone here.
         self.queue_pieces.set(id, false);
+        // "have" now says all its chunks are written.
+        self.chunk_status.remove(&idx.get());
         if !self.have.as_slice()[id] {
             self.have.as_slice_mut().set(id, true);
             let len = self.lengths.piece_length(idx) as u64;
@@ -308,21 +290,43 @@ impl ChunkTracker {
             piece.begin,
             piece.len().try_into().unwrap(),
         )?;
-        let chunk_range = self.lengths.chunk_range(chunk_info.piece_index);
-        let chunk_range = self.chunk_status.get_mut(chunk_range).unwrap();
-        if chunk_range.all() {
-            return Some(ChunkMarkingResult::PreviouslyCompleted);
+        Some(self.mark_chunk_info_downloaded(&chunk_info))
+    }
+
+    fn mark_chunk_info_downloaded(&mut self, chunk_info: &ChunkInfo) -> ChunkMarkingResult {
+        let index = chunk_info.piece_index;
+        let have = self
+            .have
+            .as_slice()
+            .get(index.get() as usize)
+            .map(|b| *b)
+            .unwrap_or(false);
+        if have {
+            return ChunkMarkingResult::PreviouslyCompleted;
         }
-        chunk_range.set(chunk_info.chunk_index as usize, true);
+        let chunks = self.lengths.chunks_per_piece(index) as usize;
+        let bits = self.chunk_status.entry(index.get()).or_insert_with(|| {
+            bitvec::vec::BitVec::<u8, bitvec::order::Msb0>::repeat(false, chunks)
+                .into_boxed_bitslice()
+        });
+        if bits.all() {
+            return ChunkMarkingResult::PreviouslyCompleted;
+        }
+        bits.set(chunk_info.chunk_index as usize, true);
         trace!(
             "piece={}, chunk_info={:?}, bits={:?}",
-            piece.index, chunk_info, chunk_range,
+            index, chunk_info, bits,
         );
 
-        if chunk_range.all() {
-            return Some(ChunkMarkingResult::Completed);
+        if bits.all() {
+            return ChunkMarkingResult::Completed;
         }
-        Some(ChunkMarkingResult::NotCompleted)
+        ChunkMarkingResult::NotCompleted
+    }
+
+    #[cfg(test)]
+    fn pieces_with_chunk_state(&self) -> usize {
+        self.chunk_status.len()
     }
 
     pub fn update_only_files(
@@ -417,104 +421,90 @@ mod tests {
         bitv::BitV, chunk_tracker::HaveNeededSelected, file_info::FileInfo, type_aliases::BF,
     };
 
-    use super::{ChunkTracker, compute_chunk_have_status};
+    use librqbit_core::lengths::ChunkInfo;
+
+    use super::{ChunkMarkingResult, ChunkTracker};
+
+    fn chunk(l: &Lengths, piece: u32, chunk: u32) -> ChunkInfo {
+        let piece = l.validate_piece_index(piece).unwrap();
+        let begin = chunk * CHUNK_SIZE;
+        let size = l.chunk_size(piece, chunk).unwrap();
+        l.chunk_info_from_received_data(piece, begin, size).unwrap()
+    }
 
     #[test]
-    fn test_compute_chunk_status() {
-        // Create the most obnoxious lengths, and ensure it doesn't break in that case.
+    fn test_chunk_marking() {
+        // Create the most obnoxious lengths, and ensure it doesn't break in that case:
+        // three pieces of three chunks, the last piece one byte long.
         let piece_length = CHUNK_SIZE * 2 + 1;
         let l = Lengths::new(piece_length as u64 * 2 + 1, piece_length).unwrap();
-
         assert_eq!(l.total_pieces(), 3);
         assert_eq!(l.default_chunks_per_piece(), 3);
         assert_eq!(l.total_chunks(), 7);
 
-        {
-            let mut have_pieces =
-                BF::from_boxed_slice(vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice());
-            have_pieces.set(0, false);
+        let bf_len = l.piece_bitfield_bytes();
+        let mut have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        have.set(1, true);
+        let selected = BF::from_boxed_slice(vec![u8::MAX; bf_len].into_boxed_slice());
+        let mut ct = ChunkTracker::new(have.into_dyn(), selected, l, &Default::default()).unwrap();
 
-            let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
-            assert!(!chunks[0]);
-            assert!(!chunks[1]);
-            assert!(!chunks[2]);
-            assert!(chunks[3]);
-            assert!(chunks[4]);
-            assert!(chunks[5]);
-            assert!(chunks[6]);
-        }
+        // Nothing is in flight yet, so nothing is kept per chunk.
+        assert_eq!(ct.pieces_with_chunk_state(), 0);
 
-        {
-            let mut have_pieces =
-                BF::from_boxed_slice(vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice());
-            have_pieces.set(1, false);
+        // A piece we have: every chunk counts as written already.
+        assert_eq!(
+            ct.mark_chunk_info_downloaded(&chunk(&l, 1, 0)),
+            ChunkMarkingResult::PreviouslyCompleted
+        );
+        assert_eq!(ct.pieces_with_chunk_state(), 0);
 
-            let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
-            dbg!(&chunks);
-            assert!(chunks[0]);
-            assert!(chunks[1]);
-            assert!(chunks[2]);
-            assert!(!chunks[3]);
-            assert!(!chunks[4]);
-            assert!(!chunks[5]);
-            assert!(chunks[6]);
-        }
+        // Piece 0 fills chunk by chunk.
+        assert_eq!(
+            ct.mark_chunk_info_downloaded(&chunk(&l, 0, 2)),
+            ChunkMarkingResult::NotCompleted
+        );
+        assert_eq!(
+            ct.mark_chunk_info_downloaded(&chunk(&l, 0, 0)),
+            ChunkMarkingResult::NotCompleted
+        );
+        assert_eq!(
+            ct.mark_chunk_info_downloaded(&chunk(&l, 0, 1)),
+            ChunkMarkingResult::Completed
+        );
+        assert_eq!(
+            ct.mark_chunk_info_downloaded(&chunk(&l, 0, 1)),
+            ChunkMarkingResult::PreviouslyCompleted
+        );
+        assert_eq!(ct.pieces_with_chunk_state(), 1);
 
-        {
-            let mut have_pieces =
-                BF::from_boxed_slice(vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice());
-            have_pieces.set(2, false);
+        // Its hash check fails: it starts over.
+        let p0 = l.validate_piece_index(0).unwrap();
+        ct.mark_piece_broken_if_not_have(p0);
+        assert_eq!(ct.pieces_with_chunk_state(), 0);
+        assert_eq!(
+            ct.mark_chunk_info_downloaded(&chunk(&l, 0, 0)),
+            ChunkMarkingResult::NotCompleted
+        );
 
-            let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
-            dbg!(&chunks);
-            assert!(chunks[0]);
-            assert!(chunks[1]);
-            assert!(chunks[2]);
-            assert!(chunks[3]);
-            assert!(chunks[4]);
-            assert!(chunks[5]);
-            assert!(!chunks[6]);
-        }
+        // The last piece has a single one-byte chunk.
+        assert_eq!(
+            ct.mark_chunk_info_downloaded(&chunk(&l, 2, 0)),
+            ChunkMarkingResult::Completed
+        );
+        // Its check passes: "have" takes over and the chunk state goes.
+        ct.mark_piece_downloaded(l.validate_piece_index(2).unwrap());
+        assert_eq!(ct.pieces_with_chunk_state(), 1);
+        assert_eq!(
+            ct.mark_chunk_info_downloaded(&chunk(&l, 2, 0)),
+            ChunkMarkingResult::PreviouslyCompleted
+        );
 
-        {
-            // A more reasonable case.
-            let piece_length = CHUNK_SIZE * 2;
-            let l = Lengths::new(piece_length as u64 * 2 + 1, piece_length).unwrap();
-
-            assert_eq!(l.total_pieces(), 3);
-            assert_eq!(l.default_chunks_per_piece(), 2);
-            assert_eq!(l.total_chunks(), 5);
-
-            {
-                let mut have_pieces = BF::from_boxed_slice(
-                    vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice(),
-                );
-                have_pieces.set(1, false);
-
-                let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
-                dbg!(&chunks);
-                assert!(chunks[0]);
-                assert!(chunks[1]);
-                assert!(!chunks[2]);
-                assert!(!chunks[3]);
-                assert!(chunks[4]);
-            }
-
-            {
-                let mut have_pieces = BF::from_boxed_slice(
-                    vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice(),
-                );
-                have_pieces.set(2, false);
-
-                let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
-                dbg!(&chunks);
-                assert!(chunks[0]);
-                assert!(chunks[1]);
-                assert!(chunks[2]);
-                assert!(chunks[3]);
-                assert!(!chunks[4]);
-            }
-        }
+        // A broken piece we already have stays as it is.
+        ct.mark_piece_broken_if_not_have(l.validate_piece_index(1).unwrap());
+        assert_eq!(
+            ct.mark_chunk_info_downloaded(&chunk(&l, 1, 2)),
+            ChunkMarkingResult::PreviouslyCompleted
+        );
     }
 
     #[test]
