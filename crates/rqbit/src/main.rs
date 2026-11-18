@@ -673,6 +673,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             wrap(FilesystemStorageFactory::default()).boxed()
         }),
         concurrent_init_limit: Some(opts.concurrent_init_limit),
+        fastresume_check: Default::default(),
         root_span: None,
         fastresume: false,
         cancellation_token: Some(cancel.clone()),

@@ -10,9 +10,10 @@ use anyhow::Context;
 
 use rand::{RngExt, seq::IteratorRandom};
 use size_format::SizeFormatterBinary as SF;
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
+    FastResumeCheck,
     api::TorrentIdOrHash,
     bitv::BitV,
     bitv_factory::BitVFactory,
@@ -83,6 +84,31 @@ impl TorrentStateInitializing {
         self.check_running.store(false, Ordering::Release);
     }
 
+    /// True when every file that has a piece in `have` exists at exactly its
+    /// expected length. Reads no data.
+    fn file_sizes_match(&self, have: &crate::type_aliases::BS) -> bool {
+        self.metadata.file_infos.iter().enumerate().all(|(idx, fi)| {
+            if fi.attrs.padding || !have.get(fi.piece_range_usize()).is_some_and(|r| r.any()) {
+                return true;
+            }
+            match self.files.file_len(idx) {
+                Ok(Some(len)) if len == fi.len => true,
+                Ok(Some(len)) => {
+                    debug!(
+                        file = ?fi.relative_filename, len, expected = fi.len,
+                        "fastresume: file length differs"
+                    );
+                    false
+                }
+                Ok(None) => false,
+                Err(e) => {
+                    debug!(file = ?fi.relative_filename, "fastresume: can't read file length: {e:#}");
+                    false
+                }
+            }
+        })
+    }
+
     async fn validate_fastresume(
         &self,
         bitv_factory: &dyn BitVFactory,
@@ -98,6 +124,17 @@ impl TorrentStateInitializing {
                 "the bitfield loaded isn't of correct length, ignoring it, will do full check"
             );
             return None;
+        }
+
+        let check = self
+            .shared
+            .session
+            .upgrade()
+            .map(|s| s.fastresume_check)
+            .unwrap_or_default();
+        if check == FastResumeCheck::FileSizes && self.file_sizes_match(hp.as_slice()) {
+            debug!(id = ?self.shared.id, "fastresume: file sizes match, trusting the bitfield");
+            return Some(hp);
         }
 
         let is_broken = self

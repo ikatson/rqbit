@@ -98,6 +98,11 @@ impl TorrentStorage for FilesystemStorage {
         Ok(f.lock_read()?.set_len(len)?)
     }
 
+    fn file_len(&self, file_id: usize) -> anyhow::Result<Option<u64>> {
+        let f = &self.opened_files.get(file_id).context("no such file")?;
+        Ok(Some(f.lock_read()?.metadata()?.len()))
+    }
+
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         Ok(Box::new(Self {
             opened_files: self

@@ -136,6 +136,7 @@ pub struct Session {
 
     // Limits and throttling
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
+    pub(crate) fastresume_check: FastResumeCheck,
     pub ratelimits: Limits,
 
     pub blocklist: IpRanges,
@@ -422,6 +423,23 @@ impl Default for DhtSessionConfig {
     }
 }
 
+/// How a torrent's saved "have" bitfield (fastresume data) is checked against
+/// the files on disk when the torrent starts. If the check fails, the torrent
+/// is fully rechecked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FastResumeCheck {
+    /// Hash at least one piece of every file that has pieces, plus a random
+    /// sample of the rest. Catches changed data, but reads from every file of
+    /// every torrent on every start.
+    #[default]
+    Sample,
+    /// Trust the bitfield when every file that has pieces exists at exactly
+    /// its expected length; read nothing. Catches deleted and truncated files,
+    /// like libtorrent's resume check. Falls back to `Sample` when a file's
+    /// length can't be read or doesn't match.
+    FileSizes,
+}
+
 pub struct SessionOptions {
     /// DHT configuration. Set to None to disable DHT entirely.
     /// Defaults to DHT enabled with persistence.
@@ -455,6 +473,10 @@ pub struct SessionOptions {
 
     /// how many concurrent torrent initializations can happen
     pub concurrent_init_limit: Option<usize>,
+
+    /// How fastresume data is checked against the files on disk when a
+    /// torrent starts. Defaults to [`FastResumeCheck::Sample`].
+    pub fastresume_check: FastResumeCheck,
 
     /// How many blocking threads does the tokio runtime have.
     /// Will limit blocking work to that number to avoid starving the runtime.
@@ -502,6 +524,7 @@ impl Default for SessionOptions {
             default_storage_factory: None,
             cancellation_token: None,
             concurrent_init_limit: None,
+            fastresume_check: FastResumeCheck::default(),
             runtime_worker_threads: None,
             root_span: None,
             ratelimits: LimitsConfig::default(),
@@ -806,6 +829,7 @@ impl Session {
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
+                fastresume_check: opts.fastresume_check,
                 udp_tracker_client,
                 ratelimits: Limits::new(opts.ratelimits),
                 ipv4_only: opts.ipv4_only,
