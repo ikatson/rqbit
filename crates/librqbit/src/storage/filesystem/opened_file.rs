@@ -378,16 +378,17 @@ impl OpenedFile {
         if g.is_padding {
             return Err(Error::FsFileIsNone.into());
         }
-        if let Some(tf) = &g.fd
-            && !g.read_only
-        {
+        if g.fd.is_some() && !g.read_only {
             #[cfg(windows)]
             if !g.tried_marking_sparse {
                 g.tried_marking_sparse = true;
-                let marked = super::sparse::mark_file_sparse(&tf.0);
+                let f = &g.fd.as_ref().ok_or(Error::FsFileIsNone)?.0;
+                let marked = super::sparse::mark_file_sparse(f);
                 tracing::debug!(path=?g.path, marked, "marking sparse");
             }
-            tf.0.set_len(len)?;
+            if let Some(tf) = &g.fd {
+                tf.0.set_len(len)?;
+            }
             return Ok(());
         }
         g.fd = None;
