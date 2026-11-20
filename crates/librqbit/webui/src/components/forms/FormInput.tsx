@@ -1,4 +1,4 @@
-import { ChangeEventHandler } from "react";
+import { ChangeEventHandler, useId } from "react";
 
 export const FormInput: React.FC<{
   value: string;
@@ -23,14 +23,15 @@ export const FormInput: React.FC<{
   inputType,
   placeholder,
 }) => {
+  const id = useId();
   return (
     <div className="flex flex-col gap-2 mb-2">
-      <label htmlFor={name}>{label}</label>
+      <label htmlFor={id}>{label}</label>
       <input
         autoFocus={autoFocus}
         type={inputType}
         className="block border border-divider rounded bg-transparent py-1.5 pl-2 focus:ring-0 focus:border-primary sm:leading-6"
-        id={name}
+        id={id}
         name={name}
         disabled={disabled}
         placeholder={placeholder}

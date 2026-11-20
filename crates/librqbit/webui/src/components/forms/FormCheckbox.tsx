@@ -1,4 +1,4 @@
-import { ChangeEventHandler } from "react";
+import { ChangeEventHandler, useId } from "react";
 
 export const FormCheckbox: React.FC<{
   checked: boolean;
@@ -22,13 +22,14 @@ export const FormCheckbox: React.FC<{
   children,
   labelLink,
 }) => {
+  const id = useId();
   return (
     <div className={`flex gap-3 items-start`}>
       <div className="flex">
         <input
           type={inputType || "checkbox"}
           className="block mt-1"
-          id={name}
+          id={id}
           name={name}
           disabled={disabled}
           checked={checked}
@@ -45,7 +46,7 @@ export const FormCheckbox: React.FC<{
             {label}
           </a>
         ) : (
-          <label htmlFor={name}>{label}</label>
+          <label htmlFor={id}>{label}</label>
         )}
 
         {help && (
