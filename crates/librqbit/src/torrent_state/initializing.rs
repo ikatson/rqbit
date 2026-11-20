@@ -33,7 +33,8 @@ pub struct TorrentStateInitializing {
     pub(crate) checked_bytes: AtomicU64,
     pause_requested: AtomicBool,
     check_running: AtomicBool,
-    previously_errored: bool,
+    // If set, ignore any saved progress and hash all the data on disk again.
+    full_check: bool,
 }
 
 impl TorrentStateInitializing {
@@ -42,7 +43,7 @@ impl TorrentStateInitializing {
         metadata: Arc<TorrentMetadata>,
         only_files: Option<Vec<usize>>,
         files: FileStorage,
-        previously_errored: bool,
+        full_check: bool,
     ) -> Self {
         Self {
             shared,
@@ -52,7 +53,7 @@ impl TorrentStateInitializing {
             checked_bytes: AtomicU64::new(0),
             pause_requested: AtomicBool::new(false),
             check_running: AtomicBool::new(false),
-            previously_errored,
+            full_check,
         }
     }
 
@@ -195,7 +196,7 @@ impl TorrentStateInitializing {
             .context("session is dead")?
             .bitv_factory
             .clone();
-        let have_pieces = if self.previously_errored {
+        let have_pieces = if self.full_check {
             if let Err(e) = bitv_factory.clear(id).await {
                 warn!(id=?self.shared.id, info_hash = ?self.shared.info_hash, error=?e, "error clearing bitfield");
             }

@@ -300,6 +300,18 @@ impl Api {
         Ok(Default::default())
     }
 
+    pub async fn api_torrent_action_recheck(
+        &self,
+        idx: TorrentIdOrHash,
+    ) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        self.session()
+            .recheck(&handle)
+            .await
+            .with_status(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
+    }
+
     pub async fn api_torrent_action_start(
         &self,
         idx: TorrentIdOrHash,
