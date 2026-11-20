@@ -203,6 +203,13 @@ pub async fn h_torrent_action_pause(
         .map(axum::Json)
 }
 
+pub async fn h_torrent_action_reannounce(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    state.api.api_torrent_action_reannounce(idx).map(axum::Json)
+}
+
 pub async fn h_torrent_action_start(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
