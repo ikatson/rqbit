@@ -13,7 +13,6 @@ type TorrentFileForCheckbox = {
   filename: string;
   pathComponents: string[];
   length: number;
-  have_bytes: number;
 };
 
 type FileTree = {
@@ -23,10 +22,7 @@ type FileTree = {
   files: TorrentFileForCheckbox[];
 };
 
-const newFileTree = (
-  torrentDetails: TorrentDetails,
-  stats: TorrentStats | null,
-): FileTree => {
+const newFileTree = (torrentDetails: TorrentDetails): FileTree => {
   const newFileTreeInner = (
     name: string,
     id: string,
@@ -83,7 +79,6 @@ const newFileTree = (
           filename: file.components[file.components.length - 1],
           pathComponents: file.components,
           length: file.length,
-          have_bytes: stats ? (stats.file_progress[id] ?? 0) : 0,
         };
       })
       .filter((f) => f !== null),
@@ -149,16 +144,22 @@ const FileTreeComponent: React.FC<{
     }
   };
 
-  const getTotalSelectedFiles = () => {
-    return children.filter((c) => selectedFiles.has(c)).length;
-  };
-
-  const getTotalSelectedBytes = () => {
-    return children
-      .filter((c) => selectedFiles.has(c))
-      .map((c) => torrentDetails.files[c].length)
-      .reduce((a, b) => a + b, 0);
-  };
+  const { selectedCount, selectedBytes, allSelected } = useMemo(() => {
+    let count = 0;
+    let bytes = 0;
+    for (let i = 0; i < children.length; i++) {
+      const c = children[i];
+      if (selectedFiles.has(c)) {
+        count += 1;
+        bytes += torrentDetails.files[c].length;
+      }
+    }
+    return {
+      selectedCount: count,
+      selectedBytes: bytes,
+      allSelected: count === children.length,
+    };
+  }, [children, selectedFiles, torrentDetails]);
 
   const fileLink = (file: TorrentFileForCheckbox) => {
     if (allowStream && torrentId != null) {
@@ -173,61 +174,68 @@ const FileTreeComponent: React.FC<{
           {expanded ? <CiSquareMinus /> : <CiSquarePlus />}
         </IconButton>
         <FormCheckbox
-          checked={children.every((c) => selectedFiles.has(c))}
+          checked={allSelected}
           label={`${
             tree.name ? tree.name + ", " : ""
-          } ${getTotalSelectedFiles()} files, ${formatBytes(
-            getTotalSelectedBytes(),
-          )}`}
+          } ${selectedCount} files, ${formatBytes(selectedBytes)}`}
           name={tree.id}
           onChange={handleToggleTree}
         ></FormCheckbox>
       </div>
 
-      <div className="pl-5" hidden={!expanded}>
-        {tree.dirs.map((dir) => (
-          <FileTreeComponent
-            torrentId={torrentId}
-            torrentDetails={torrentDetails}
-            torrentStats={torrentStats}
-            key={dir.name}
-            tree={dir}
-            selectedFiles={selectedFiles}
-            setSelectedFiles={setSelectedFiles}
-            initialExpanded={false}
-            showProgressBar={showProgressBar}
-            disabled={disabled}
-            allowStream={allowStream}
-          />
-        ))}
-        <div className="pl-1">
-          {tree.files.map((file) => (
-            <div
-              key={file.id}
-              className={`${
-                showProgressBar
-                  ? "grid grid-cols-1 gap-1 items-start lg:grid-cols-2 mb-2 lg:mb-0"
-                  : ""
-              }`}
-            >
-              <FormCheckbox
-                checked={selectedFiles.has(file.id)}
-                label={`${file.filename} (${formatBytes(file.length)})`}
-                name={`torrent-${torrentId}-file-${file.id}`}
-                disabled={disabled}
-                onChange={() => handleToggleFile(file.id)}
-                labelLink={fileLink(file)}
-              ></FormCheckbox>
-              {showProgressBar && (
-                <ProgressBar
-                  now={(file.have_bytes / file.length) * 100}
-                  variant={file.have_bytes == file.length ? "success" : "info"}
-                />
-              )}
-            </div>
+      {expanded && (
+        <div className="pl-5">
+          {tree.dirs.map((dir) => (
+            <FileTreeComponent
+              torrentId={torrentId}
+              torrentDetails={torrentDetails}
+              torrentStats={torrentStats}
+              key={dir.name}
+              tree={dir}
+              selectedFiles={selectedFiles}
+              setSelectedFiles={setSelectedFiles}
+              initialExpanded={false}
+              showProgressBar={showProgressBar}
+              disabled={disabled}
+              allowStream={allowStream}
+            />
           ))}
+          <div className="pl-1">
+            {tree.files.map((file) => {
+              const haveBytes = torrentStats
+                ? (torrentStats.file_progress[file.id] ?? 0)
+                : 0;
+              return (
+                <div
+                  key={file.id}
+                  className={`${
+                    showProgressBar
+                      ? "grid grid-cols-1 gap-1 items-start lg:grid-cols-2 mb-2 lg:mb-0"
+                      : ""
+                  }`}
+                >
+                  <FormCheckbox
+                    checked={selectedFiles.has(file.id)}
+                    label={`${file.filename} (${formatBytes(file.length)})`}
+                    name={`torrent-${torrentId}-file-${file.id}`}
+                    disabled={disabled}
+                    onChange={() => handleToggleFile(file.id)}
+                    labelLink={fileLink(file)}
+                  ></FormCheckbox>
+                  {showProgressBar && (
+                    <ProgressBar
+                      now={
+                        file.length > 0 ? (haveBytes / file.length) * 100 : 100
+                      }
+                      variant={haveBytes == file.length ? "success" : "info"}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 };
@@ -251,10 +259,7 @@ export const FileListInput: React.FC<{
   disabled,
   allowStream,
 }) => {
-  let fileTree = useMemo(
-    () => newFileTree(torrentDetails, torrentStats),
-    [torrentDetails, torrentStats],
-  );
+  let fileTree = useMemo(() => newFileTree(torrentDetails), [torrentDetails]);
 
   return (
     <FileTreeComponent
