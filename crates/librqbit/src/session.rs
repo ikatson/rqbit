@@ -182,13 +182,17 @@ async fn torrent_from_url(
 fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
     torrent: &ValidatedTorrentMetaV1Info<ByteBuf>,
     filename_re: &str,
+    list_only: bool,
 ) -> anyhow::Result<Vec<usize>> {
     let filename_re = regex::Regex::new(filename_re).context("filename regex is incorrect")?;
     let mut only_files = Vec::new();
     for (idx, fd) in torrent.iter_file_details().enumerate() {
-        let full_path = fd.filename.to_pathbuf();
-        if filename_re.is_match(full_path.to_str().unwrap()) {
+        let full_path = fd.filename.to_string();
+        if filename_re.is_match(&full_path) {
             only_files.push(idx);
+            if !list_only {
+                info!(filename=?fd.filename, "will download");
+            }
         }
     }
     if only_files.is_empty() {
@@ -217,15 +221,7 @@ fn compute_only_files(
             Ok(Some(only_files))
         }
         (None, Some(filename_re)) => {
-            let only_files = compute_only_files_regex(info, &filename_re)?;
-            for (idx, fd) in info.iter_file_details().enumerate() {
-                if !only_files.contains(&idx) {
-                    continue;
-                }
-                if !list_only {
-                    info!(filename=?fd.filename, "will download");
-                }
-            }
+            let only_files = compute_only_files_regex(info, &filename_re, list_only)?;
             Ok(Some(only_files))
         }
         (None, None) => Ok(None),
@@ -1190,11 +1186,7 @@ impl Session {
         info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
         magnet_name: Option<&str>,
     ) -> anyhow::Result<Option<PathBuf>> {
-        let files = info
-            .iter_file_details()
-            .map(|fd| Ok((fd.filename.to_pathbuf(), fd.len)))
-            .collect::<anyhow::Result<Vec<(PathBuf, u64)>>>()?;
-        if files.len() < 2 {
+        if info.iter_file_lengths().nth(1).is_none() {
             return Ok(None);
         }
 
@@ -1218,11 +1210,12 @@ impl Session {
             return Ok(Some(pb));
         }
         // Let the subfolder name be the longest filename
-        let longest = files
-            .iter()
-            .max_by_key(|(_, l)| l)
-            .unwrap()
-            .0
+        let longest_pb = info
+            .iter_file_details()
+            .max_by_key(|fd| fd.len)
+            .map(|fd| fd.filename.to_pathbuf())
+            .context("empty file list")?;
+        let longest = longest_pb
             .file_stem()
             .context("can't determine longest filename")?;
         Ok::<_, anyhow::Error>(Some(PathBuf::from(longest)))

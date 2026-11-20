@@ -856,15 +856,20 @@ impl TorrentStateLive {
         let pieces = locked.get_pieces_mut()?;
 
         // if we have all the pieces of the file, reopen it read only
-        for (idx, file_info) in self
+        let piece_offset = self.metadata.lengths().piece_offset(id);
+        let piece_end = piece_offset + self.metadata.lengths().piece_length(id) as u64;
+        let start_idx = self
             .metadata
             .file_infos
-            .iter()
-            .enumerate()
-            .skip_while(|(_, fi)| !fi.piece_range.contains(&id.get()))
-            .take_while(|(_, fi)| fi.piece_range.contains(&id.get()))
-        {
-            let _remaining = pieces.update_file_have_on_piece_completed(id, idx, file_info);
+            .partition_point(|fi| fi.offset_in_torrent + fi.len <= piece_offset);
+        for (rel_idx, file_info) in self.metadata.file_infos[start_idx..].iter().enumerate() {
+            if file_info.offset_in_torrent >= piece_end {
+                break;
+            }
+            if file_info.piece_range.contains(&id.get()) {
+                let idx = start_idx + rel_idx;
+                let _remaining = pieces.update_file_have_on_piece_completed(id, idx, file_info);
+            }
         }
 
         self.streams

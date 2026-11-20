@@ -144,15 +144,12 @@ impl PieceTracker {
 
         // Then check naturally ordered queued pieces
         // Note: iter_queued_pieces only returns pieces in queue_pieces (not in-flight)
-        let queued: Vec<_> = self
+        let next_queued = self
             .chunks
             .iter_queued_pieces(req.file_priorities, req.file_infos)
-            .collect();
-
-        for piece in queued {
-            if (req.peer_has_piece)(piece) {
-                return self.reserve_piece(piece, req.peer);
-            }
+            .find(|piece| (req.peer_has_piece)(*piece));
+        if let Some(piece) = next_queued {
+            return self.reserve_piece(piece, req.peer);
         }
 
         // 3. Try steal with 3x threshold (moderately slow peer)
@@ -800,5 +797,67 @@ mod tests {
             }
             _ => panic!("Expected Stolen, got {:?}", result),
         }
+    }
+
+    #[test]
+    fn test_many_small_files_per_piece_dedup_and_short_circuit() {
+        use librqbit_core::constants::CHUNK_SIZE;
+        use std::path::PathBuf;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // 2 pieces (32 KiB total), 32 small files of 1024 bytes each (16 files per piece)
+        let piece_len = CHUNK_SIZE;
+        let num_files = 32usize;
+        let file_len = (piece_len as u64 * 2) / (num_files as u64);
+        let lengths = Lengths::new(piece_len as u64 * 2, piece_len).unwrap();
+
+        let file_infos: FileInfos = (0..num_files)
+            .map(|i| {
+                let offset = i as u64 * file_len;
+                let piece_idx = u32::try_from(offset / piece_len as u64).unwrap();
+                crate::file_info::FileInfo {
+                    relative_filename: PathBuf::from(format!("f_{i}.bin")),
+                    offset_in_torrent: offset,
+                    piece_range: piece_idx..(piece_idx + 1),
+                    len: file_len,
+                    attrs: Default::default(),
+                }
+            })
+            .collect();
+        let file_priorities = make_default_file_priorities(&file_infos);
+
+        let bf_len = lengths.piece_bitfield_bytes();
+        let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        let selected = BF::from_boxed_slice(vec![0xffu8; bf_len].into_boxed_slice());
+        let ct = ChunkTracker::new(have.into_dyn(), selected, lengths, &file_infos).unwrap();
+
+        // Even though 16 files map to piece 0 and 16 files map to piece 1,
+        // iter_queued_pieces should yield [0, 1] without repeating piece 0 or piece 1 16 times.
+        let queued: Vec<u32> = ct
+            .iter_queued_pieces(&file_priorities, &file_infos)
+            .map(|p| p.get())
+            .collect();
+        assert_eq!(queued, vec![0, 1]);
+
+        let mut tracker = PieceTracker::new(ct);
+        let checks = AtomicUsize::new(0);
+        let res = tracker.acquire_piece(AcquireRequest {
+            peer: peer(1),
+            peer_avg_time: None,
+            priority_pieces: std::iter::empty(),
+            file_priorities: &file_priorities,
+            file_infos: &file_infos,
+            peer_has_piece: |_| {
+                checks.fetch_add(1, Ordering::Relaxed);
+                true
+            },
+            can_steal: |_| false,
+        });
+        match res {
+            AcquireResult::Reserved(p) => assert_eq!(p.get(), 0),
+            _ => panic!("Expected Reserved(0)"),
+        }
+        // Should stop immediately after checking piece 0 once
+        assert_eq!(checks.load(Ordering::Relaxed), 1);
     }
 }
