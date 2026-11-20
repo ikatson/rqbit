@@ -40,7 +40,7 @@ use tracing::warn;
 use crate::Session;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
-use crate::limits::LimitsConfig;
+use crate::limits::{Limits, LimitsConfig};
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
@@ -115,7 +115,6 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_max_request_window: Option<usize>,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
-    pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
     #[cfg(feature = "disable-upload")]
@@ -191,6 +190,10 @@ pub struct ManagedTorrentShared {
     pub(crate) storage_factory: BoxStorageFactory,
     pub(crate) session: Weak<Session>,
 
+    // Per-torrent rate limits. Lives here rather than in the live state so that
+    // it survives pause/unpause and can be changed at any time.
+    pub(crate) ratelimits: Limits,
+
     // "dn" from magnet link
     pub(crate) magnet_name: Option<String>,
 
@@ -248,6 +251,18 @@ impl ManagedTorrent {
 
     pub fn info_hash(&self) -> Id20 {
         self.shared.info_hash
+    }
+
+    /// Current per-torrent upload and download limits.
+    pub fn ratelimits(&self) -> LimitsConfig {
+        self.shared.ratelimits.get_config()
+    }
+
+    /// Change the per-torrent upload and download limits. Takes effect immediately,
+    /// whether the torrent is live or paused. `None` means unlimited.
+    pub fn set_ratelimits(&self, config: LimitsConfig) {
+        self.shared.ratelimits.set_upload_bps(config.upload_bps);
+        self.shared.ratelimits.set_download_bps(config.download_bps);
     }
 
     pub fn only_files(&self) -> Option<Vec<usize>> {
