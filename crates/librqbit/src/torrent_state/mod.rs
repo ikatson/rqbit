@@ -500,6 +500,35 @@ impl ManagedTorrent {
         }
     }
 
+    /// Forget which pieces are known to be downloaded and get ready to hash all
+    /// the data on disk again. The check itself runs on the next start().
+    pub(crate) fn prepare_recheck(&self) -> anyhow::Result<()> {
+        let mut g = self.locked.write();
+        let metadata = self
+            .metadata
+            .load_full()
+            .context("torrent metadata is not resolved yet")?;
+        let files = match &g.state {
+            ManagedTorrentState::Initializing(_) => bail!("torrent is already being checked"),
+            ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
+            ManagedTorrentState::Live(live) => live.pause()?.files,
+            ManagedTorrentState::Paused(_) => g.state.take().assert_paused().files,
+            ManagedTorrentState::Error(_) => self
+                .shared
+                .storage_factory
+                .create_and_init(self.shared(), &metadata)?,
+        };
+        g.state = ManagedTorrentState::Initializing(Arc::new(TorrentStateInitializing::new(
+            self.shared.clone(),
+            metadata,
+            g.only_files.clone(),
+            files,
+            true,
+        )));
+        self.state_change_notify.notify_waiters();
+        Ok(())
+    }
+
     /// Get stats.
     pub fn stats(&self) -> TorrentStats {
         use stats::TorrentStatsState as S;

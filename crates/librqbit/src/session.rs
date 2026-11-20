@@ -1634,6 +1634,20 @@ impl Session {
         Ok(())
     }
 
+    /// Hash all the torrent's data on disk again, ignoring any saved progress.
+    /// A paused torrent stays paused after the check; a live one resumes.
+    pub async fn recheck(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        let paused = handle.is_paused();
+        handle.prepare_recheck()?;
+        let peer_rx = if paused {
+            None
+        } else {
+            self.make_peer_rx_managed_torrent(handle, true)
+        };
+        handle.start(peer_rx, paused)?;
+        Ok(())
+    }
+
     pub async fn update_only_files(
         self: &Arc<Self>,
         handle: &ManagedTorrentHandle,
