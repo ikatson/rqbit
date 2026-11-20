@@ -15,8 +15,20 @@ function deepEqual(obj1: any, obj2: any): boolean {
     return false;
   }
 
-  // 3. Handle Arrays specifically
-  if (Array.isArray(obj1) !== Array.isArray(obj2)) return false;
+  // 3. Handle Arrays specifically in O(N) without Object.keys() or keys2.includes()
+  const isArr1 = Array.isArray(obj1);
+  if (isArr1 !== Array.isArray(obj2)) return false;
+
+  if (isArr1) {
+    const len = obj1.length;
+    if (len !== obj2.length) return false;
+    for (let i = 0; i < len; i++) {
+      if (!deepEqual(obj1[i], obj2[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   const keys1 = Object.keys(obj1);
   const keys2 = Object.keys(obj2);
@@ -24,9 +36,13 @@ function deepEqual(obj1: any, obj2: any): boolean {
   // 4. Optimization: different number of properties means they aren't equal
   if (keys1.length !== keys2.length) return false;
 
-  // 5. Recursive check for every key
-  for (const key of keys1) {
-    if (!keys2.includes(key) || !deepEqual(obj1[key], obj2[key])) {
+  // 5. Recursive check for every key in O(1) per key lookup
+  for (let i = 0; i < keys1.length; i++) {
+    const key = keys1[i];
+    if (
+      !Object.prototype.hasOwnProperty.call(obj2, key) ||
+      !deepEqual(obj1[key], obj2[key])
+    ) {
       return false;
     }
   }
