@@ -36,6 +36,8 @@ pub struct TrackerComms {
     announce_port: u16,
     reqwest_client: reqwest::Client,
     key: u32,
+    // A new value here asks all trackers to announce now instead of waiting for the interval.
+    reannounce: tokio::sync::watch::Receiver<()>,
 }
 
 #[derive(Default)]
@@ -149,6 +151,7 @@ impl TrackerComms {
         announce_port: u16,
         reqwest_client: reqwest::Client,
         udp_client: UdpTrackerClient,
+        mut reannounce: tokio::sync::watch::Receiver<()>,
     ) -> Option<BoxStream<'static, SocketAddr>> {
         let trackers = trackers
             .into_iter()
@@ -169,6 +172,8 @@ impl TrackerComms {
         tracing::trace!(?trackers);
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<SocketAddr>(16);
+        // Only react to requests made from now on.
+        reannounce.mark_unchanged();
 
         let s = async_stream::stream! {
             use futures::StreamExt;
@@ -181,6 +186,7 @@ impl TrackerComms {
                 announce_port,
                 reqwest_client,
                 key: rand::random(),
+                reannounce,
             });
             let mut futures = FuturesUnordered::new();
             for tracker in trackers {
@@ -235,8 +241,21 @@ impl TrackerComms {
         }
     }
 
+    async fn sleep_or_reannounce(
+        reannounce: &mut tokio::sync::watch::Receiver<()>,
+        interval: Duration,
+    ) {
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {}
+            Ok(()) = reannounce.changed() => {
+                debug!("reannounce requested");
+            }
+        }
+    }
+
     async fn task_single_tracker_monitor_http(&self, tracker_url: Url) -> anyhow::Result<()> {
         trace!(url=%tracker_url, "starting monitor");
+        let mut reannounce = self.reannounce.clone();
         let mut event = Some(tracker_comms_http::TrackerRequestEvent::Started);
 
         loop {
@@ -256,7 +275,7 @@ impl TrackerComms {
             event = None;
             let interval = self.force_tracker_interval.unwrap_or(interval);
             debug!("sleeping for {:?} after calling tracker", interval);
-            tokio::time::sleep(interval).await;
+            Self::sleep_or_reannounce(&mut reannounce, interval).await;
         }
     }
 
@@ -333,10 +352,11 @@ impl TrackerComms {
 
         let mut sleep_interval: Option<Duration> = None;
         let mut prev_addrs: Option<UdpTrackerResolveResult> = None;
+        let mut reannounce = self.reannounce.clone();
         loop {
             if let Some(i) = sleep_interval {
                 trace!(interval=?sleep_interval, "sleeping");
-                tokio::time::sleep(i).await;
+                Self::sleep_or_reannounce(&mut reannounce, i).await;
             }
 
             // This should retry forever until the addrs are resolved.
@@ -434,5 +454,98 @@ impl TrackerComms {
                 Err(e)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{net::SocketAddr, time::Duration};
+
+    use futures::StreamExt;
+    use librqbit_core::hash_id::Id20;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_util::sync::CancellationToken;
+
+    use super::TrackerComms;
+    use crate::tracker_comms_udp::UdpTrackerClient;
+
+    // An HTTP tracker that asks to be called again in an hour, and returns
+    // one peer whose port counts the announces.
+    async fn spawn_tracker() -> SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut announces: u16 = 0;
+            loop {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = conn.read(&mut chunk).await.unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                announces += 1;
+                let mut body = b"d8:intervali3600e5:peers6:\x7f\x00\x00\x01".to_vec();
+                body.extend_from_slice(&announces.to_be_bytes());
+                body.push(b'e');
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                conn.write_all(head.as_bytes()).await.unwrap();
+                conn.write_all(&body).await.unwrap();
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_reannounce_wakes_sleeping_tracker() {
+        let tracker = spawn_tracker().await;
+        let (reannounce_tx, reannounce_rx) = tokio::sync::watch::channel(());
+        let udp_client = UdpTrackerClient::new(CancellationToken::new(), None)
+            .await
+            .unwrap();
+        let mut peers = TrackerComms::start(
+            Id20::new([1; 20]),
+            Id20::new([2; 20]),
+            [format!("http://{tracker}/announce").parse().unwrap()]
+                .into_iter()
+                .collect(),
+            Box::new(()),
+            None,
+            4240,
+            reqwest::Client::new(),
+            udp_client,
+            reannounce_rx,
+        )
+        .unwrap();
+
+        let next_port = async |peers: &mut futures::stream::BoxStream<'static, SocketAddr>| {
+            tokio::time::timeout(Duration::from_secs(5), peers.next())
+                .await
+                .ok()
+                .flatten()
+                .map(|a| a.port())
+        };
+
+        assert_eq!(next_port(&mut peers).await, Some(1));
+
+        // The tracker asked for an hour's wait, so nothing more comes by itself.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), peers.next())
+                .await
+                .is_err()
+        );
+
+        // Asking to reannounce sends the next announce right away. The request
+        // may be made while the stream isn't being polled, and must not be lost.
+        reannounce_tx.send_replace(());
+        assert_eq!(next_port(&mut peers).await, Some(2));
+        reannounce_tx.send_replace(());
+        assert_eq!(next_port(&mut peers).await, Some(3));
     }
 }

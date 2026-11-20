@@ -195,6 +195,9 @@ pub struct ManagedTorrentShared {
     pub(crate) magnet_name: Option<String>,
 
     pub(crate) client_name_and_version: String,
+
+    // Sending a value asks the torrent's trackers to announce now.
+    pub(crate) reannounce_tx: tokio::sync::watch::Sender<()>,
 }
 
 impl ManagedTorrentShared {
@@ -498,6 +501,16 @@ impl ManagedTorrent {
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
         }
+    }
+
+    /// Ask the torrent's trackers for peers now, instead of waiting for the
+    /// interval they asked for. The torrent must be live.
+    pub fn reannounce(&self) -> anyhow::Result<()> {
+        if self.live().is_none() {
+            bail!("torrent is not live");
+        }
+        self.shared.reannounce_tx.send_replace(());
+        Ok(())
     }
 
     /// Get stats.
