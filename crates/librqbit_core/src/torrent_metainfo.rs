@@ -85,6 +85,12 @@ impl<BufType> TorrentMetaV1<BufType> {
 pub struct TorrentMetaV1Info<BufType> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<BufType>,
+    #[serde(
+        default = "none",
+        rename = "name.utf-8",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub name_utf8: Option<BufType>,
     pub pieces: BufType,
     #[serde(rename = "piece length")]
     pub piece_length: u32,
@@ -168,12 +174,15 @@ where
         buf
     }
 
-    /// Iterate path components as strings. Will decode using the detected encoding, replacing
-    /// unknown characters with a placeholder.
+    /// Iterate path components as strings. Will decode using UTF-8 if valid, or fall back to
+    /// the detected encoding, replacing unknown characters with a placeholder.
     pub fn iter_components(&self) -> impl Iterator<Item = Cow<'a, str>> + use<'a, BufType> {
         let encoding = self.encoding;
         self.iter_components_bytes()
-            .map(move |part| encoding.decode(part).0)
+            .map(move |part| match std::str::from_utf8(part) {
+                Ok(s) => Cow::Borrowed(s),
+                Err(_) => encoding.decode(part).0,
+            })
     }
 
     /// Iterate path components as bytes.
@@ -255,9 +264,11 @@ pub struct ValidatedTorrentMetaV1Info<BufType> {
 impl<BufType: AsRef<[u8]>> ValidatedTorrentMetaV1Info<BufType> {
     pub fn name(&self) -> Option<Cow<'_, str>> {
         self.info
-            .name
-            .as_ref()
-            .map(|n| self.encoding.decode(n.as_ref()).0)
+            .raw_name()
+            .map(|n| match std::str::from_utf8(n.as_ref()) {
+                Ok(s) => Cow::Borrowed(s),
+                Err(_) => self.encoding.decode(n.as_ref()).0,
+            })
             .filter(|n| !n.is_empty())
     }
 
@@ -385,17 +396,22 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
 
     pub fn detect_encoding(&self) -> &'static Encoding {
         let mut encdetect = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Deny);
-        if let Some(name) = self.name.as_ref() {
+        if let Some(name) = self.raw_name() {
             encdetect.feed(name.as_ref(), false);
         }
 
         for file in self.files.iter().flat_map(|f| f.iter()) {
-            for component in file.path.iter() {
+            for component in file.raw_path() {
                 encdetect.feed(component.as_ref(), false);
             }
         }
+        encdetect.feed(b"", true);
 
         encdetect.guess(None, chardetng::Utf8Detection::Allow)
+    }
+
+    fn raw_name(&self) -> Option<&BufType> {
+        self.name_utf8.as_ref().or(self.name.as_ref())
     }
 
     pub(crate) fn iter_file_details_raw(
@@ -407,7 +423,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
             (Some(length), None) => Ok(Either::Left(once(FileDetails {
                 filename: FileIteratorName {
                     encoding,
-                    data: FileIteratorNameData::Single(self.name.as_ref()),
+                    data: FileIteratorNameData::Single(self.raw_name()),
                 },
                 len: length,
                 attr: self.attr.as_ref(),
@@ -423,7 +439,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
                 Ok(Either::Right(files.iter().map(move |f| FileDetails {
                     filename: FileIteratorName {
                         encoding,
-                        data: FileIteratorNameData::Tree(&f.path),
+                        data: FileIteratorNameData::Tree(f.raw_path()),
                     },
                     len: f.length,
                     attr: f.attr.as_ref(),
@@ -444,6 +460,12 @@ const fn none<T>() -> Option<T> {
 pub struct TorrentMetaV1File<BufType> {
     pub length: u64,
     pub path: Vec<BufType>,
+    #[serde(
+        default = "none",
+        rename = "path.utf-8",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub path_utf8: Option<Vec<BufType>>,
 
     #[serde(default = "none", skip_serializing_if = "Option::is_none")]
     pub attr: Option<BufType>,
@@ -457,6 +479,15 @@ pub struct TorrentMetaV1File<BufType> {
     pub symlink_path: Option<Vec<BufType>>,
 }
 
+impl<BufType> TorrentMetaV1File<BufType> {
+    fn raw_path(&self) -> &[BufType] {
+        self.path_utf8
+            .as_deref()
+            .filter(|p| !p.is_empty())
+            .unwrap_or(&self.path)
+    }
+}
+
 impl<BufType> CloneToOwned for TorrentMetaV1File<BufType>
 where
     BufType: CloneToOwned,
@@ -467,6 +498,7 @@ where
         TorrentMetaV1File {
             length: self.length,
             path: self.path.clone_to_owned(within_buffer),
+            path_utf8: self.path_utf8.clone_to_owned(within_buffer),
             attr: self.attr.clone_to_owned(within_buffer),
             sha1: self.sha1.clone_to_owned(within_buffer),
             symlink_path: self.symlink_path.clone_to_owned(within_buffer),
@@ -483,6 +515,7 @@ where
     fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         TorrentMetaV1Info {
             name: self.name.clone_to_owned(within_buffer),
+            name_utf8: self.name_utf8.clone_to_owned(within_buffer),
             pieces: self.pieces.clone_to_owned(within_buffer),
             piece_length: self.piece_length,
             length: self.length,
@@ -710,5 +743,88 @@ mod tests {
         top.extend_from_slice(&info);
         top.push(b'e');
         top
+    }
+
+    #[test]
+    fn test_utf8_name_and_path_fields_preferred_over_legacy() {
+        let pieces = vec![0u8; 20];
+        let mut path_legacy = vec![b'l'];
+        // Invalid UTF-8 (e.g., GBK for '原' is 0xD4 0xAD)
+        path_legacy.extend_from_slice(&bstr(&[0xd4, 0xad]));
+        path_legacy.push(b'e');
+
+        let mut path_utf8 = vec![b'l'];
+        path_utf8.extend_from_slice(&bstr("原.txt".as_bytes()));
+        path_utf8.push(b'e');
+
+        let mut flist = vec![b'l'];
+        flist.extend_from_slice(&bdict(&[
+            (b"length".as_slice(), bint(10)),
+            (b"path".as_slice(), path_legacy),
+            (b"path.utf-8".as_slice(), path_utf8),
+        ]));
+        flist.push(b'e');
+
+        let info = bdict(&[
+            (b"files".as_slice(), flist),
+            (b"name".as_slice(), bstr(&[0xd4, 0xad])),
+            (b"name.utf-8".as_slice(), bstr("原神".as_bytes())),
+            (b"piece length".as_slice(), bint(16384)),
+            (b"pieces".as_slice(), bstr(&pieces)),
+        ]);
+        let top = bdict(&[(b"info".as_slice(), info)]);
+
+        let torrent = from_bytes::<TorrentMetaV1Borrowed>(&top).unwrap();
+        let validated = torrent.info.data.validate().unwrap();
+        assert_eq!(validated.name().as_deref(), Some("原神"));
+
+        let files: Vec<String> = validated
+            .iter_file_details()
+            .map(|f| f.filename.to_string())
+            .collect();
+        assert_eq!(files, vec!["原.txt"]);
+    }
+
+    #[test]
+    fn test_valid_utf8_not_corrupted_by_non_utf8_sibling() {
+        let pieces = vec![0u8; 20];
+
+        let mut path_utf8 = vec![b'l'];
+        path_utf8.extend_from_slice(&bstr("原.txt".as_bytes()));
+        path_utf8.push(b'e');
+
+        // A sibling file with non-UTF-8 bytes that causes chardetng to fall back to WINDOWS_1252.
+        let mut path_non_utf8 = vec![b'l'];
+        path_non_utf8.extend_from_slice(&bstr(&[0x80, b'a']));
+        path_non_utf8.push(b'e');
+
+        let mut flist = vec![b'l'];
+        flist.extend_from_slice(&bdict(&[
+            (b"length".as_slice(), bint(10)),
+            (b"path".as_slice(), path_utf8),
+        ]));
+        flist.extend_from_slice(&bdict(&[
+            (b"length".as_slice(), bint(10)),
+            (b"path".as_slice(), path_non_utf8),
+        ]));
+        flist.push(b'e');
+
+        let info = bdict(&[
+            (b"files".as_slice(), flist),
+            (b"name".as_slice(), bstr("原".as_bytes())),
+            (b"piece length".as_slice(), bint(16384)),
+            (b"pieces".as_slice(), bstr(&pieces)),
+        ]);
+        let top = bdict(&[(b"info".as_slice(), info)]);
+
+        let torrent = from_bytes::<TorrentMetaV1Borrowed>(&top).unwrap();
+        let validated = torrent.info.data.validate().unwrap();
+        assert_eq!(validated.name().as_deref(), Some("原"));
+
+        let files: Vec<String> = validated
+            .iter_file_details()
+            .map(|f| f.filename.to_string())
+            .collect();
+        assert_eq!(files[0], "原.txt");
     }
 }
