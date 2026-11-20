@@ -96,7 +96,7 @@ use crate::{
     session_stats::SessionStats,
     stream_connect::ConnectionKind,
     torrent_state::{peer::Peer, utils::atomic_inc},
-    type_aliases::{BF, FilePriorities, FileStorage, PeerHandle},
+    type_aliases::{BF, FileInfos, FilePriorities, FileStorage, PeerHandle},
 };
 
 use self::{
@@ -128,7 +128,7 @@ pub(crate) struct TorrentStateLocked {
     pub(crate) pieces: Option<PieceTracker>,
 
     // The sorted file list in which order to download them.
-    file_priorities: FilePriorities,
+    pub(crate) file_priorities: FilePriorities,
 
     // If this is None, then it was already used
     fatal_errors_tx: Option<tokio::sync::oneshot::Sender<anyhow::Error>>,
@@ -227,6 +227,7 @@ impl TorrentStateLive {
 
     pub(crate) fn new(
         paused: TorrentStatePaused,
+        file_order: Option<&[usize]>,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<Arc<Self>> {
@@ -243,19 +244,7 @@ impl TorrentStateLive {
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
 
-        // TODO: make it configurable
-        let file_priorities = {
-            let mut pri = (0..paused.metadata.file_infos.len()).collect::<Vec<usize>>();
-            // sort by filename, cause many torrents have random sort order.
-            pri.sort_unstable_by_key(|id| {
-                paused
-                    .metadata
-                    .file_infos
-                    .get(*id)
-                    .map(|fi| fi.relative_filename.as_path())
-            });
-            pri
-        };
+        let file_priorities = make_file_priorities(&paused.metadata.file_infos, file_order);
 
         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
 
@@ -807,6 +796,11 @@ impl TorrentStateLive {
             warn!(id=self.shared.id, info_hash=?self.shared.info_hash, "there's nowhere to send fatal error, receiver is dead");
         }
         Err(res)
+    }
+
+    pub(crate) fn update_file_order(&self, file_order: Option<&[usize]>) {
+        self.lock_write("update_file_order").file_priorities =
+            make_file_priorities(&self.metadata.file_infos, file_order);
     }
 
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
@@ -2098,4 +2092,70 @@ fn format_peer_client_name(value: &ByteBuf<'_>) -> Option<String> {
     }
 
     Some(client_name)
+}
+
+/// The order in which the piece picker walks through files: the files in
+/// `file_order` first (unknown and repeated indexes are skipped), then the rest
+/// sorted by filename, because many torrents have a random file order.
+pub(crate) fn make_file_priorities(
+    file_infos: &FileInfos,
+    file_order: Option<&[usize]>,
+) -> FilePriorities {
+    let mut seen = vec![false; file_infos.len()];
+    let mut pri = Vec::with_capacity(file_infos.len());
+    for id in file_order.unwrap_or_default().iter().copied() {
+        if let Some(s) = seen.get_mut(id).filter(|s| !**s) {
+            *s = true;
+            pri.push(id);
+        }
+    }
+    let mut rest = (0..file_infos.len())
+        .filter(|id| !seen[*id])
+        .collect::<Vec<usize>>();
+    rest.sort_unstable_by_key(|id| file_infos[*id].relative_filename.as_path());
+    pri.extend(rest);
+    pri
+}
+
+#[cfg(test)]
+mod tests {
+    use super::make_file_priorities;
+    use crate::file_info::FileInfo;
+
+    fn file_infos(names: &[&str]) -> Vec<FileInfo> {
+        names
+            .iter()
+            .zip(0u32..)
+            .map(|(name, i)| FileInfo {
+                relative_filename: name.into(),
+                offset_in_torrent: i.into(),
+                piece_range: i..i + 1,
+                attrs: Default::default(),
+                len: 1,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_file_priorities_default_sorts_by_name() {
+        let fi = file_infos(&["c", "a", "b"]);
+        assert_eq!(make_file_priorities(&fi, None), vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn test_file_priorities_listed_files_first() {
+        let fi = file_infos(&["c", "a", "b", "d"]);
+        // The rest keep their name order after the listed files.
+        assert_eq!(make_file_priorities(&fi, Some(&[3, 0])), vec![3, 0, 1, 2]);
+        assert_eq!(make_file_priorities(&fi, Some(&[])), vec![1, 2, 0, 3]);
+    }
+
+    #[test]
+    fn test_file_priorities_skips_unknown_and_repeated() {
+        let fi = file_infos(&["c", "a", "b"]);
+        assert_eq!(
+            make_file_priorities(&fi, Some(&[2, 9, 2, 0])),
+            vec![2, 0, 1]
+        );
+    }
 }

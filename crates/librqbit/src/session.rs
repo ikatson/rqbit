@@ -37,6 +37,7 @@ use crate::{
     torrent_state::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
+        validate_file_order,
     },
     type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, PeerStream},
 };
@@ -257,6 +258,10 @@ pub struct AddTorrentOptions {
     /// An explicit list of file IDs to download.
     /// To see the file indices, run with "list_only".
     pub only_files: Option<Vec<usize>>,
+    /// The order in which files are downloaded, as file IDs, first one first.
+    /// Files left out keep their usual place (sorted by name) after the listed ones.
+    /// It does not select files: a file not in `only_files` is still skipped.
+    pub file_order: Option<Vec<usize>>,
     /// Allow writing on top of existing files, including when resuming a torrent.
     /// You probably want to set it, however for safety it's not default.
     ///
@@ -1295,6 +1300,10 @@ impl Session {
             opts.only_files_regex,
             opts.list_only,
         )?;
+        let file_order = opts.file_order;
+        if let Some(order) = file_order.as_deref() {
+            validate_file_order(order, metadata.file_infos.len())?;
+        }
 
         let output_folder = match (opts.output_folder, opts.sub_folder) {
             (None, None) => self.output_folder.join(
@@ -1397,6 +1406,7 @@ impl Session {
                     paused: opts.paused,
                     state: ManagedTorrentState::Initializing(initializing),
                     only_files,
+                    file_order,
                 }),
                 state_change_notify: Notify::new(),
                 shared: minfo,
