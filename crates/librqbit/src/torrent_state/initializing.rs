@@ -228,10 +228,15 @@ impl TorrentStateInitializing {
             }
         };
 
+        let only_files_set: Option<std::collections::HashSet<usize>> = self
+            .only_files
+            .as_ref()
+            .map(|v| v.iter().copied().collect());
+
         let selected_pieces = compute_selected_pieces(
             self.metadata.lengths(),
             |idx| {
-                self.only_files
+                only_files_set
                     .as_ref()
                     .map(|o| o.contains(&idx))
                     .unwrap_or(true)
@@ -262,8 +267,7 @@ impl TorrentStateInitializing {
             .spawner
             .block_in_place_with_semaphore(|| {
                 for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
-                    if self
-                        .only_files
+                    if only_files_set
                         .as_ref()
                         .map(|v| v.contains(&idx))
                         .unwrap_or(true)

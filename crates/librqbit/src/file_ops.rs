@@ -69,6 +69,20 @@ impl<'a> FileOps<'a> {
         }
     }
 
+    /// Find the first file that overlaps `absolute_offset` (or the first non-empty file at that
+    /// boundary) using binary search on `offset_in_torrent + len`, returning `(file_idx, offset_in_file)`.
+    fn find_starting_file(&self, absolute_offset: u64) -> (usize, u64) {
+        let start_idx = self
+            .file_infos
+            .partition_point(|fi| fi.offset_in_torrent + fi.len <= absolute_offset);
+        let offset_in_file = self
+            .file_infos
+            .get(start_idx)
+            .map(|fi| absolute_offset - fi.offset_in_torrent)
+            .unwrap_or(0);
+        (start_idx, offset_in_file)
+    }
+
     // Returns the bitvector with pieces we have.
     pub fn initial_check(
         &self,
@@ -77,7 +91,6 @@ impl<'a> FileOps<'a> {
     ) -> anyhow::Result<BF> {
         let mut have_pieces =
             BF::from_boxed_slice(vec![0u8; self.torrent.lengths().piece_bitfield_bytes()].into());
-        let mut piece_files = Vec::<usize>::new();
 
         #[derive(Debug)]
         struct CurrentFile<'a> {
@@ -114,7 +127,6 @@ impl<'a> FileOps<'a> {
                 bail!("initial check paused");
             }
 
-            piece_files.clear();
             let mut computed_hash = Sha1::new();
             let mut piece_remaining = piece_info.len as usize;
             let mut some_files_broken = false;
@@ -133,14 +145,14 @@ impl<'a> FileOps<'a> {
                             .try_into()?;
                 }
 
-                piece_files.push(current_file.index);
-
                 let pos = current_file.processed_bytes;
                 piece_remaining -= to_read_in_file;
                 current_file.mark_processed_bytes(to_read_in_file as u64);
 
-                if current_file.is_broken {
-                    // no need to read.
+                if current_file.is_broken || some_files_broken {
+                    // Either this file is already known broken, or an earlier file in this piece
+                    // failed to read so the piece hash cannot match anyway.
+                    some_files_broken = true;
                     continue;
                 }
 
@@ -190,29 +202,30 @@ impl<'a> FileOps<'a> {
 
         let mut h = Sha1::new();
         let piece_length = self.torrent.lengths().piece_length(piece_index);
-        let mut absolute_offset = self.torrent.lengths().piece_offset(piece_index);
+        let absolute_offset = self.torrent.lengths().piece_offset(piece_index);
         let mut buf = vec![0u8; std::cmp::min(65536, piece_length as usize)];
 
         let mut piece_remaining_bytes = piece_length as usize;
+        let (start_idx, mut offset_in_file) = self.find_starting_file(absolute_offset);
 
-        for (file_idx, fi) in self.file_infos.iter().enumerate() {
+        for (rel_idx, fi) in self.file_infos[start_idx..].iter().enumerate() {
+            let file_idx = start_idx + rel_idx;
             let file_len = fi.len;
-            if absolute_offset > file_len {
-                absolute_offset -= file_len;
+            if file_len == 0 {
                 continue;
             }
-            let file_remaining_len = file_len - absolute_offset;
+            let file_remaining_len = file_len - offset_in_file;
 
             let to_read_in_file: usize =
                 std::cmp::min(file_remaining_len, piece_remaining_bytes as u64).try_into()?;
             trace!(
                 "piece={}, file_idx={}, seeking to {}",
-                piece_index, file_idx, absolute_offset,
+                piece_index, file_idx, offset_in_file,
             );
             update_hash_from_file(
                 file_idx,
                 fi,
-                absolute_offset,
+                offset_in_file,
                 self.files,
                 &mut h,
                 &mut buf,
@@ -231,7 +244,7 @@ impl<'a> FileOps<'a> {
                 break;
             }
 
-            absolute_offset = 0;
+            offset_in_file = 0;
         }
 
         match self
@@ -269,27 +282,28 @@ impl<'a> FileOps<'a> {
         if result_buf.len() < chunk_info.size as usize {
             anyhow::bail!("read_chunk(): not enough capacity in the provided buffer")
         }
-        let mut absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
-        let mut buf = result_buf;
+        let absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
+        let mut buf = &mut result_buf[..chunk_info.size as usize];
+        let (start_idx, mut offset_in_file) = self.find_starting_file(absolute_offset);
 
-        for (file_idx, file_info) in self.file_infos.iter().enumerate() {
+        for (rel_idx, file_info) in self.file_infos[start_idx..].iter().enumerate() {
+            let file_idx = start_idx + rel_idx;
             let file_len = file_info.len;
-            if absolute_offset > file_len {
-                absolute_offset -= file_len;
+            if file_len == 0 {
                 continue;
             }
-            let file_remaining_len = file_len - absolute_offset;
+            let file_remaining_len = file_len - offset_in_file;
             let to_read_in_file = std::cmp::min(file_remaining_len, buf.len() as u64).try_into()?;
 
             trace!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. To read chunk: {:?}",
-                chunk_info.piece_index, who_sent, file_idx, absolute_offset, &chunk_info
+                chunk_info.piece_index, who_sent, file_idx, offset_in_file, &chunk_info
             );
             if file_info.attrs.padding {
                 buf[..to_read_in_file].fill(0);
             } else {
                 self.files
-                    .pread_exact(file_idx, absolute_offset, &mut buf[..to_read_in_file])
+                    .pread_exact(file_idx, offset_in_file, &mut buf[..to_read_in_file])
                     .with_context(|| {
                         format!("error reading {file_idx} bytes, file_id: {to_read_in_file}")
                     })?;
@@ -301,7 +315,7 @@ impl<'a> FileOps<'a> {
                 break;
             }
 
-            absolute_offset = 0;
+            offset_in_file = 0;
         }
 
         Ok(())
@@ -313,17 +327,18 @@ impl<'a> FileOps<'a> {
         data: &Piece<ByteBuf<'a>>,
         chunk_info: &ChunkInfo,
     ) -> anyhow::Result<()> {
-        let mut absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
+        let absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
         let mut data = DoubleBufHelper::new(data.data().0, data.data().1);
+        let (start_idx, mut offset_in_file) = self.find_starting_file(absolute_offset);
 
-        for (file_idx, file_info) in self.file_infos.iter().enumerate() {
+        for (rel_idx, file_info) in self.file_infos[start_idx..].iter().enumerate() {
+            let file_idx = start_idx + rel_idx;
             let file_len = file_info.len;
-            if absolute_offset > file_len {
-                absolute_offset -= file_len;
+            if file_len == 0 {
                 continue;
             }
 
-            let remaining_len = file_len - absolute_offset;
+            let remaining_len = file_len - offset_in_file;
             let to_write = std::cmp::min(data.len() as u64, remaining_len).try_into()?;
 
             trace!(
@@ -334,14 +349,14 @@ impl<'a> FileOps<'a> {
                 chunk_info.offset,
                 file_idx,
                 to_write,
-                absolute_offset
+                offset_in_file
             );
             let slices = data.as_ioslices(to_write);
             debug_assert_eq!(slices[0].len() + slices[1].len(), to_write);
             if !file_info.attrs.padding {
                 let written = self
                     .files
-                    .pwrite_all_vectored(file_idx, absolute_offset, slices)
+                    .pwrite_all_vectored(file_idx, offset_in_file, slices)
                     .with_context(|| {
                         format!(
                             "error writing to file {file_idx} (\"{:?}\")",
@@ -355,9 +370,184 @@ impl<'a> FileOps<'a> {
                 break;
             }
 
-            absolute_offset = 0;
+            offset_in_file = 0;
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        path::Path,
+        sync::{
+            Mutex,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        },
+    };
+
+    use bytes::Bytes;
+    use clone_to_owned::CloneToOwned;
+    use librqbit_core::constants::CHUNK_SIZE;
+    use peer_binary_protocol::Piece;
+    use sha1w::{ISha1, Sha1};
+
+    use crate::{
+        bitv::BitV,
+        file_ops::FileOps,
+        storage::TorrentStorage,
+        torrent_state::{ManagedTorrentShared, TorrentMetadata},
+    };
+
+    struct CountingMemoryStorage {
+        files: Mutex<HashMap<usize, Vec<u8>>>,
+        read_calls: AtomicUsize,
+        write_calls: AtomicUsize,
+    }
+
+    impl CountingMemoryStorage {
+        fn new() -> Self {
+            Self {
+                files: Mutex::new(HashMap::new()),
+                read_calls: AtomicUsize::new(0),
+                write_calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl TorrentStorage for CountingMemoryStorage {
+        fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+            self.read_calls.fetch_add(1, Ordering::Relaxed);
+            let g = self.files.lock().unwrap();
+            let data = g
+                .get(&file_id)
+                .ok_or_else(|| anyhow::anyhow!("missing file {file_id}"))?;
+            let start = usize::try_from(offset)?;
+            let end = start + buf.len();
+            if end > data.len() {
+                anyhow::bail!("short read on file {file_id}");
+            }
+            buf.copy_from_slice(&data[start..end]);
+            Ok(())
+        }
+
+        fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
+            self.write_calls.fetch_add(1, Ordering::Relaxed);
+            let mut g = self.files.lock().unwrap();
+            let data = g.entry(file_id).or_default();
+            let start = usize::try_from(offset)?;
+            let end = start + buf.len();
+            if data.len() < end {
+                data.resize(end, 0);
+            }
+            data[start..end].copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn remove_file(&self, _file_id: usize, _filename: &Path) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn ensure_file_length(&self, _file_id: usize, _length: u64) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
+            Ok(Box::new(Self::new()))
+        }
+
+        fn remove_directory_if_empty(&self, _path: &Path) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn init(
+            &mut self,
+            _shared: &ManagedTorrentShared,
+            _metadata: &TorrentMetadata,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_file_ops_binary_search_and_short_circuit_initial_check() {
+        let piece_len = CHUNK_SIZE as usize;
+        // 20 files of 2048 bytes each = 40960 bytes (3 pieces of 16384, 16384, 8192)
+        // Plus a 0-byte file in the middle to verify 0-byte files are skipped cleanly.
+        let file_lengths: Vec<usize> = (0..21).map(|i| if i == 10 { 0 } else { 2048 }).collect();
+        let total_len: usize = file_lengths.iter().sum();
+        let payload: Vec<u8> = (0..total_len)
+            .map(|i| u8::try_from(i % 251).unwrap())
+            .collect();
+
+        let mut pieces = Vec::new();
+        for chunk in payload.chunks(piece_len) {
+            let mut h = Sha1::new();
+            h.update(chunk);
+            pieces.extend_from_slice(&h.finish());
+        }
+
+        let mut flist = vec![b'l'];
+        for (i, &len) in file_lengths.iter().enumerate() {
+            let fname = format!("f_{i:02}.bin");
+            let entry = format!("d6:lengthi{len}e4:pathl{}:{fname}ee", fname.len());
+            flist.extend_from_slice(entry.as_bytes());
+        }
+        flist.push(b'e');
+        let mut torrent_bytes = Vec::new();
+        torrent_bytes.extend_from_slice(b"d4:infod5:files");
+        torrent_bytes.extend_from_slice(&flist);
+        torrent_bytes.extend_from_slice(b"4:name4:test12:piece lengthi16384e6:pieces");
+        torrent_bytes.extend_from_slice(format!("{}:", pieces.len()).as_bytes());
+        torrent_bytes.extend_from_slice(&pieces);
+        torrent_bytes.extend_from_slice(b"ee");
+
+        let tb = Bytes::from(torrent_bytes);
+        let parsed = librqbit_core::torrent_metainfo::torrent_from_bytes(&tb).unwrap();
+        let owned = parsed.clone_to_owned(Some(&tb));
+        let info = owned.info.data.validate().unwrap();
+        let meta = TorrentMetadata::new(info, tb.clone(), owned.info.raw_bytes.0).unwrap();
+
+        // 1. Fresh/empty storage: initial_check should short-circuit each piece after the first missing file
+        let storage = CountingMemoryStorage::new();
+        let fops = FileOps::new(&meta.info, &storage, &meta.file_infos);
+        let progress = AtomicU64::new(0);
+        let pause = AtomicBool::new(false);
+        let have = fops.initial_check(&progress, &pause).unwrap();
+        assert!(!have.as_slice()[0]);
+        assert!(!have.as_slice()[1]);
+        assert!(!have.as_slice()[2]);
+        // Only 1 read call per piece (3 pieces total), not 20 read calls!
+        assert_eq!(storage.read_calls.load(Ordering::Relaxed), 3);
+
+        // 2. Write all pieces via write_chunk, verify 0-byte file (idx 10) is never written or read
+        let peer = "127.0.0.1:1000".parse().unwrap();
+        let lengths = *meta.lengths();
+        for p in 0..lengths.total_pieces() {
+            let p_idx = lengths.validate_piece_index(p).unwrap();
+            let offset = p as usize * piece_len;
+            let end = (offset + piece_len).min(payload.len());
+            let slice = &payload[offset..end];
+            let cinfo = lengths
+                .chunk_info_from_received_data(p_idx, 0, u32::try_from(slice.len()).unwrap())
+                .unwrap();
+            let msg = Piece::from_data(p, 0, slice);
+            fops.write_chunk(peer, &msg, &cinfo).unwrap();
+            assert!(fops.check_piece(p_idx).unwrap());
+            let mut rbuf = vec![0u8; slice.len()];
+            fops.read_chunk(peer, &cinfo, &mut rbuf).unwrap();
+            assert_eq!(&rbuf[..], slice);
+        }
+        assert!(!storage.files.lock().unwrap().contains_key(&10));
+
+        // 3. Remove only file 0 (in piece 0); piece 0 should fail on first file, while pieces 1 and 2 still pass!
+        storage.files.lock().unwrap().remove(&0);
+        storage.read_calls.store(0, Ordering::Relaxed);
+        let have2 = fops.initial_check(&progress, &pause).unwrap();
+        assert!(!have2.as_slice()[0]);
+        assert!(have2.as_slice()[1]);
+        assert!(have2.as_slice()[2]);
     }
 }

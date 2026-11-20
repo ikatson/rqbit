@@ -238,11 +238,29 @@ impl ChunkTracker {
         file_priorities: &'a FilePriorities,
         file_infos: &'a FileInfos,
     ) -> impl Iterator<Item = ValidPieceIndex> + 'a {
+        let mut last_piece_range: Option<std::ops::Range<u32>> = None;
+        let mut last_piece: Option<usize> = None;
         file_priorities
             .iter()
             .filter_map(|p| Some((*p, file_infos.get(*p)?)))
-            .filter(|(id, f)| self.per_file_bytes[*id] != f.len)
+            .filter(|(id, f)| !f.piece_range.is_empty() && self.per_file_bytes[*id] != f.len)
+            .filter(move |(_id, f)| {
+                if last_piece_range.as_ref() == Some(&f.piece_range) {
+                    false
+                } else {
+                    last_piece_range = Some(f.piece_range.clone());
+                    true
+                }
+            })
             .flat_map(|(_id, f)| f.iter_piece_priorities())
+            .filter(move |id| {
+                if last_piece == Some(*id) {
+                    false
+                } else {
+                    last_piece = Some(*id);
+                    true
+                }
+            })
             .filter(|id| self.queue_pieces[*id])
             .filter_map(|id| id.try_into().ok())
             .filter_map(|id| self.lengths.validate_piece_index(id))

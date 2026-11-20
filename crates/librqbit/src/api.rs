@@ -567,14 +567,19 @@ fn make_torrent_details(
     only_files: Option<&[usize]>,
     output_folder: String,
 ) -> Result<TorrentDetailsResponse> {
+    let only_files_set: Option<std::collections::HashSet<usize>> =
+        only_files.map(|o| o.iter().copied().collect());
     let files = match info {
         Some(info) => info
             .iter_file_details()
             .enumerate()
             .map(|(idx, d)| {
-                let name = d.filename.to_string();
                 let components = d.filename.to_vec();
-                let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
+                let name = components.join(std::path::MAIN_SEPARATOR_STR);
+                let included = only_files_set
+                    .as_ref()
+                    .map(|o| o.contains(&idx))
+                    .unwrap_or(true);
                 TorrentDetailsResponseFile {
                     name,
                     components,
