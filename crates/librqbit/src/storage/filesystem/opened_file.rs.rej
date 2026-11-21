@@ -1,0 +1,271 @@
+--- crates/librqbit/src/storage/filesystem/opened_file.rs
++++ crates/librqbit/src/storage/filesystem/opened_file.rs
+@@ -262,10 +353,59 @@ struct OpenedFileLocked {
+     fd: Option<TrackedFile>,
+     read_only: bool,
+     is_padding: bool,
++    target_len: Option<u64>,
++    length_ensured: bool,
+     #[cfg(windows)]
+     tried_marking_sparse: bool,
+ }
+ 
++impl OpenedFileLocked {
++    fn is_ready_for_write(&self) -> bool {
++        let ready = self.fd.is_some()
++            && !self.read_only
++            && (self.length_ensured || self.target_len.is_none());
++        #[cfg(windows)]
++        let ready = ready && self.tried_marking_sparse;
++        ready
++    }
++
++    fn prepare_file_for_write(&mut self, f: &File) -> std::io::Result<()> {
++        #[cfg(windows)]
++        if !self.tried_marking_sparse {
++            self.tried_marking_sparse = true;
++            let marked = super::sparse::mark_file_sparse(f);
++            tracing::debug!(path=?self.path, marked, "marking sparse");
++        }
++        if !self.length_ensured {
++            if let Some(target_len) = self.target_len {
++                preallocate_or_set_len(f, target_len)?;
++            }
++            self.length_ensured = true;
++        }
++        Ok(())
++    }
++
++    fn prepare_cached_fd_for_write(&mut self) -> anyhow::Result<()> {
++        #[cfg(windows)]
++        if !self.tried_marking_sparse {
++            let marked = {
++                let f = &self.fd.as_ref().ok_or(Error::FsFileIsNone)?.0;
++                super::sparse::mark_file_sparse(f)
++            };
++            self.tried_marking_sparse = true;
++            tracing::debug!(path=?self.path, marked, "marking sparse");
++        }
++        if !self.length_ensured {
++            if let Some(target_len) = self.target_len {
++                let f = &self.fd.as_ref().ok_or(Error::FsFileIsNone)?.0;
++                preallocate_or_set_len(f, target_len)?;
++            }
++            self.length_ensured = true;
++        }
++        Ok(())
++    }
++}
++
+ #[derive(Debug)]
+ pub(crate) struct OpenedFile {
+     file: RwLock<OpenedFileLocked>,
+@@ -279,6 +419,8 @@ impl OpenedFile {
+                 fd: None,
+                 read_only: false,
+                 is_padding: false,
++                target_len: None,
++                length_ensured: false,
+                 #[cfg(windows)]
+                 tried_marking_sparse: false,
+             }),
+@@ -293,6 +435,8 @@ impl OpenedFile {
+                 fd: Some(TrackedFile::new(f)),
+                 read_only: false,
+                 is_padding: false,
++                target_len: None,
++                length_ensured: false,
+                 #[cfg(windows)]
+                 tried_marking_sparse: false,
+             }),
+@@ -306,6 +450,8 @@ impl OpenedFile {
+                 fd: None,
+                 read_only: false,
+                 is_padding: true,
++                target_len: None,
++                length_ensured: false,
+                 #[cfg(windows)]
+                 tried_marking_sparse: false,
+             }),
+@@ -366,11 +512,9 @@ impl OpenedFile {
+             if g.is_padding {
+                 return Err(Error::FsFileIsNone.into());
+             }
+-            #[cfg(windows)]
+-            let ready = g.fd.is_some() && !g.read_only && g.tried_marking_sparse;
+-            #[cfg(not(windows))]
+-            let ready = g.fd.is_some() && !g.read_only;
+-            if ready && let Some(tf) = &g.fd {
++            if g.is_ready_for_write()
++                && let Some(tf) = &g.fd
++            {
+                 return tf.0.pwrite_all(offset, buf);
+             }
+         }
+@@ -382,12 +526,7 @@ impl OpenedFile {
+             g.fd = None;
+             let f = open_rw_create(&g.path)
+                 .with_context(|| format!("error opening {:?} in read/write mode", g.path))?;
+-            #[cfg(windows)]
+-            if !g.tried_marking_sparse {
+-                g.tried_marking_sparse = true;
+-                let marked = super::sparse::mark_file_sparse(&f);
+-                tracing::debug!(path=?g.path, marked, "marking sparse");
+-            }
++            g.prepare_file_for_write(&f)?;
+             if CACHED_OPEN_FDS.load(Ordering::Relaxed) < MAX_CACHED_OPEN_FDS {
+                 g.fd = Some(TrackedFile::new(f));
+                 g.read_only = false;
+@@ -395,13 +534,8 @@ impl OpenedFile {
+                 drop(g);
+                 return f.pwrite_all(offset, buf);
+             }
+-        }
+-        #[cfg(windows)]
+-        if !g.tried_marking_sparse {
+-            g.tried_marking_sparse = true;
+-            let f = &g.fd.as_ref().ok_or(Error::FsFileIsNone)?.0;
+-            let marked = super::sparse::mark_file_sparse(f);
+-            tracing::debug!(path=?g.path, marked, "marking sparse");
++        } else {
++            g.prepare_cached_fd_for_write()?;
+         }
+         let g = RwLockWriteGuard::downgrade(g);
+         g.fd.as_ref()
+@@ -420,11 +554,9 @@ impl OpenedFile {
+             if g.is_padding {
+                 return Err(Error::FsFileIsNone.into());
+             }
+-            #[cfg(windows)]
+-            let ready = g.fd.is_some() && !g.read_only && g.tried_marking_sparse;
+-            #[cfg(not(windows))]
+-            let ready = g.fd.is_some() && !g.read_only;
+-            if ready && let Some(tf) = &g.fd {
++            if g.is_ready_for_write()
++                && let Some(tf) = &g.fd
++            {
+                 return tf.0.pwrite_all_vectored(offset, bufs);
+             }
+         }
+@@ -436,12 +568,7 @@ impl OpenedFile {
+             g.fd = None;
+             let f = open_rw_create(&g.path)
+                 .with_context(|| format!("error opening {:?} in read/write mode", g.path))?;
+-            #[cfg(windows)]
+-            if !g.tried_marking_sparse {
+-                g.tried_marking_sparse = true;
+-                let marked = super::sparse::mark_file_sparse(&f);
+-                tracing::debug!(path=?g.path, marked, "marking sparse");
+-            }
++            g.prepare_file_for_write(&f)?;
+             if CACHED_OPEN_FDS.load(Ordering::Relaxed) < MAX_CACHED_OPEN_FDS {
+                 g.fd = Some(TrackedFile::new(f));
+                 g.read_only = false;
+@@ -449,13 +576,8 @@ impl OpenedFile {
+                 drop(g);
+                 return f.pwrite_all_vectored(offset, bufs);
+             }
+-        }
+-        #[cfg(windows)]
+-        if !g.tried_marking_sparse {
+-            g.tried_marking_sparse = true;
+-            let f = &g.fd.as_ref().ok_or(Error::FsFileIsNone)?.0;
+-            let marked = super::sparse::mark_file_sparse(f);
+-            tracing::debug!(path=?g.path, marked, "marking sparse");
++        } else {
++            g.prepare_cached_fd_for_write()?;
+         }
+         let g = RwLockWriteGuard::downgrade(g);
+         g.fd.as_ref()
+@@ -469,29 +591,34 @@ impl OpenedFile {
+         if g.is_padding {
+             return Err(Error::FsFileIsNone.into());
+         }
++        g.target_len = Some(len);
+         if g.fd.is_some() && !g.read_only {
+-            #[cfg(windows)]
+-            if !g.tried_marking_sparse {
+-                g.tried_marking_sparse = true;
+-                let f = &g.fd.as_ref().ok_or(Error::FsFileIsNone)?.0;
+-                let marked = super::sparse::mark_file_sparse(f);
+-                tracing::debug!(path=?g.path, marked, "marking sparse");
+-            }
+-            if let Some(tf) = &g.fd {
+-                tf.0.set_len(len)?;
+-            }
++            g.length_ensured = false;
++            g.prepare_cached_fd_for_write()?;
+             return Ok(());
+         }
++        if len > 0 {
++            match std::fs::symlink_metadata(&g.path) {
++                Ok(meta) if meta.len() == len => {
++                    g.length_ensured = true;
++                    return Ok(());
++                }
++                Ok(_) => {}
++                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
++                    // Defer creating and preallocating non-empty missing files until the
++                    // first write so queued/paused torrents and untouched files do not
++                    // consume inodes/MFT records upfront.
++                    g.length_ensured = false;
++                    return Ok(());
++                }
++                Err(e) => return Err(e.into()),
++            }
++        }
+         g.fd = None;
+         let f = open_rw_create(&g.path)
+             .with_context(|| format!("error opening {:?} in read/write mode", g.path))?;
+-        #[cfg(windows)]
+-        if !g.tried_marking_sparse {
+-            g.tried_marking_sparse = true;
+-            let marked = super::sparse::mark_file_sparse(&f);
+-            tracing::debug!(path=?g.path, marked, "marking sparse");
+-        }
+-        f.set_len(len)?;
++        g.length_ensured = false;
++        g.prepare_file_for_write(&f)?;
+         Ok(())
+     }
+ 
+@@ -532,8 +659,11 @@ impl OpenedFile {
+         if g.fd.is_none() || g.read_only {
+             g.fd = None;
+             let f = open_rw_create(&g.path)?;
++            g.prepare_file_for_write(&f)?;
+             g.fd = Some(TrackedFile::new(f));
+             g.read_only = false;
++        } else {
++            g.prepare_cached_fd_for_write()?;
+         }
+         RwLockWriteGuard::try_map(g, |f| f.fd.as_mut().map(|tf| &mut tf.0))
+             .ok()
+@@ -641,15 +771,25 @@ mod tests {
+         assert!(!nested.exists());
+ 
+         of.ensure_file_length(16).unwrap();
+-        assert!(nested.exists());
+-        assert_eq!(nested.metadata().unwrap().len(), 16);
++        assert!(!nested.exists());
+         assert!(of.file.read().fd.is_none());
+ 
+         of.pwrite_all(0, b"abcd").unwrap();
++        assert!(nested.exists());
++        assert_eq!(nested.metadata().unwrap().len(), 16);
+         of.pread_exact(0, &mut buf).unwrap();
+         assert_eq!(&buf, b"abcd");
++
++        of.ensure_file_length(8).unwrap();
++        assert_eq!(nested.metadata().unwrap().len(), 8);
+         drop(of);
+ 
++        let zero_path = td.path().join("sub2/zero.bin");
++        let of_zero = OpenedFile::new_lazy(zero_path.clone());
++        of_zero.ensure_file_length(0).unwrap();
++        assert!(zero_path.exists());
++        assert_eq!(zero_path.metadata().unwrap().len(), 0);
++
+         let files: Vec<OpenedFile> = (0..(MAX_CACHED_OPEN_FDS + 100))
+             .map(|i| {
+                 let p = td.path().join(format!("f_{i}.bin"));

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -49,7 +50,27 @@ impl BlockingSpawner {
             return tokio::task::block_in_place(f);
         }
 
+        tokio::task::coop::consume_budget().await;
         f()
+    }
+
+    /// Run a `'static` blocking closure on Tokio's blocking thread pool while respecting
+    /// the concurrency semaphore. Unlike `block_in_place_with_semaphore`, this offloads work
+    /// from single-threaded runtimes as well and avoids pinning async worker cores.
+    pub async fn spawn_blocking<F, R>(&self, f: F) -> anyhow::Result<R>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let _permit = self
+            .concurrent_block_in_place_semaphore
+            .acquire()
+            .await
+            .context("blocking spawner semaphore closed")?;
+        let span = tracing::Span::current();
+        tokio::task::spawn_blocking(move || span.in_scope(f))
+            .await
+            .context("spawn_blocking task failed")
     }
 
     pub fn semaphore(&self) -> Arc<Semaphore> {
