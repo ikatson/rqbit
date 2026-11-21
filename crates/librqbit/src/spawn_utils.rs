@@ -62,15 +62,19 @@ impl BlockingSpawner {
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
-        let _permit = self
+        let permit = self
             .concurrent_block_in_place_semaphore
-            .acquire()
+            .clone()
+            .acquire_owned()
             .await
             .context("blocking spawner semaphore closed")?;
         let span = tracing::Span::current();
-        tokio::task::spawn_blocking(move || span.in_scope(f))
-            .await
-            .context("spawn_blocking task failed")
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            span.in_scope(f)
+        })
+        .await
+        .context("spawn_blocking task failed")
     }
 
     pub fn semaphore(&self) -> Arc<Semaphore> {
