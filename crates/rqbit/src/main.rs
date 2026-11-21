@@ -514,15 +514,20 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
+    // BlockingSpawner caps concurrent torrent disk/hash work to opts.max_blocking_threads.
+    // Reserve extra threads in Tokio's blocking pool so tokio::fs (persistence/bitv),
+    // DNS lookups, and block_in_place worker handoffs never starve while all
+    // BlockingSpawner permits are busy.
+    const EXTRA_TOKIO_BLOCKING_THREADS: usize = 8;
+
     let rt = rt_builder
         .enable_time()
         .enable_io()
-        // the default is 512, it can get out of hand, as this program is CPU-bound on
-        // hash checking.
-        // note: we aren't using spawn_blocking() anymore, so this doesn't apply,
-        // however I'm still messing around, so in case we do, let's block the number of
-        // spawned threads.
-        .max_blocking_threads(opts.max_blocking_threads as usize)
+        .max_blocking_threads(
+            (opts.max_blocking_threads as usize)
+                .max(1)
+                .saturating_add(EXTRA_TOKIO_BLOCKING_THREADS),
+        )
         .build()?;
 
     let token = tokio_util::sync::CancellationToken::new();
