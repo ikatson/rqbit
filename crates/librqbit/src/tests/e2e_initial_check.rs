@@ -1,10 +1,10 @@
 use std::{
     path::Path,
     sync::{
-        Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use tempfile::TempDir;
@@ -21,32 +21,86 @@ use crate::{
     torrent_state::{ManagedTorrentShared, TorrentMetadata},
 };
 
+struct BlockingGate {
+    entered: tokio::sync::Notify,
+    entered_flag: AtomicBool,
+    released: Mutex<bool>,
+    cvar: Condvar,
+}
+
+impl BlockingGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entered: tokio::sync::Notify::new(),
+            entered_flag: AtomicBool::new(false),
+            released: Mutex::new(false),
+            cvar: Condvar::new(),
+        })
+    }
+
+    fn enter_and_wait(&self, timeout: Duration) {
+        self.entered_flag.store(true, Ordering::SeqCst);
+        self.entered.notify_waiters();
+        let guard = self.released.lock().unwrap();
+        let (_guard, wait_res) = self
+            .cvar
+            .wait_timeout_while(guard, timeout, |released| !*released)
+            .unwrap();
+        assert!(!wait_res.timed_out(), "timed out waiting on BlockingGate");
+    }
+
+    async fn wait_entered(&self) {
+        loop {
+            let notified = self.entered.notified();
+            if self.entered_flag.load(Ordering::SeqCst) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.cvar.notify_all();
+    }
+}
+
+struct GateReleaseOnDrop(Vec<Arc<BlockingGate>>);
+
+impl Drop for GateReleaseOnDrop {
+    fn drop(&mut self) {
+        for gate in &self.0 {
+            gate.release();
+        }
+    }
+}
+
 #[derive(Clone)]
-struct SlowStorageFactory {
-    read_delay_ms: Arc<AtomicU64>,
-    init_delay_ms: u64,
+struct GatedStorageFactory {
+    init_gate: Option<Arc<BlockingGate>>,
+    read_gates: Arc<Vec<(usize, Arc<BlockingGate>)>>,
     reads_count: Arc<AtomicUsize>,
 }
 
-struct SlowStorage {
+struct GatedStorage {
     inner: FilesystemStorage,
-    read_delay_ms: Arc<AtomicU64>,
-    init_delay_ms: u64,
+    init_gate: Option<Arc<BlockingGate>>,
+    read_gates: Arc<Vec<(usize, Arc<BlockingGate>)>>,
     reads_count: Arc<AtomicUsize>,
 }
 
-impl StorageFactory for SlowStorageFactory {
-    type Storage = SlowStorage;
+impl StorageFactory for GatedStorageFactory {
+    type Storage = GatedStorage;
 
     fn create(
         &self,
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<Self::Storage> {
-        Ok(SlowStorage {
+        Ok(GatedStorage {
             inner: FilesystemStorageFactory::default().create(shared, metadata)?,
-            read_delay_ms: self.read_delay_ms.clone(),
-            init_delay_ms: self.init_delay_ms,
+            init_gate: self.init_gate.clone(),
+            read_gates: self.read_gates.clone(),
             reads_count: self.reads_count.clone(),
         })
     }
@@ -56,23 +110,24 @@ impl StorageFactory for SlowStorageFactory {
     }
 }
 
-impl TorrentStorage for SlowStorage {
+impl TorrentStorage for GatedStorage {
     fn init(
         &mut self,
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
-        if self.init_delay_ms > 0 {
-            std::thread::sleep(Duration::from_millis(self.init_delay_ms));
+        if let Some(gate) = &self.init_gate {
+            gate.enter_and_wait(Duration::from_secs(10));
         }
         self.inner.init(shared, metadata)
     }
 
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.reads_count.fetch_add(1, Ordering::Relaxed);
-        let delay = self.read_delay_ms.load(Ordering::Relaxed);
-        if delay > 0 {
-            std::thread::sleep(Duration::from_millis(delay));
+        let read_num = self.reads_count.fetch_add(1, Ordering::SeqCst) + 1;
+        for (target_read, gate) in self.read_gates.iter() {
+            if *target_read == read_num {
+                gate.enter_and_wait(Duration::from_secs(10));
+            }
         }
         self.inner.pread_exact(file_id, offset, buf)
     }
@@ -96,8 +151,8 @@ impl TorrentStorage for SlowStorage {
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         Ok(Box::new(Self {
             inner: self.inner.take_fs()?,
-            read_delay_ms: self.read_delay_ms.clone(),
-            init_delay_ms: self.init_delay_ms,
+            init_gate: self.init_gate.clone(),
+            read_gates: self.read_gates.clone(),
             reads_count: self.reads_count.clone(),
         }))
     }
@@ -125,7 +180,8 @@ fn test_initial_check_single_thread_runtime_stays_responsive() {
 
     rt.block_on(async {
         let dir = TempDir::new().unwrap();
-        let piece_len = 65536u32;
+        // 24 x 512 KiB = 12 MiB = 192 x 64 KiB reads (>= 3 slices of 4 MiB / 64 reads).
+        let piece_len = 512 * 1024u32;
         let total_size = piece_len as usize * 24;
         create_new_file_with_random_content(&dir.path().join("existing.bin"), total_size);
 
@@ -145,28 +201,36 @@ fn test_initial_check_single_thread_runtime_stays_responsive() {
             .await
             .unwrap();
 
-        let max_tick_gap_ms = Arc::new(AtomicU64::new(0));
-        let tick_count = Arc::new(AtomicUsize::new(0));
-        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let heartbeat = {
-            let max_tick_gap_ms = max_tick_gap_ms.clone();
-            let tick_count = tick_count.clone();
-            let stop = stop.clone();
+        let slice1_gate = BlockingGate::new();
+        let slice2_gate = BlockingGate::new();
+        let _guard = GateReleaseOnDrop(vec![slice1_gate.clone(), slice2_gate.clone()]);
+
+        // On `new_current_thread`, an inline synchronous check would freeze the event loop
+        // inside `slice1_gate.enter_and_wait` and never poll `driver` below.
+        let driver = {
+            let session = session.clone();
+            let slice1_gate = slice1_gate.clone();
+            let slice2_gate = slice2_gate.clone();
             tokio::spawn(async move {
-                let mut last = Instant::now();
-                while !stop.load(Ordering::Relaxed) {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                    let gap = u64::try_from(last.elapsed().as_millis()).unwrap_or(u64::MAX);
-                    max_tick_gap_ms.fetch_max(gap, Ordering::Relaxed);
-                    tick_count.fetch_add(1, Ordering::Relaxed);
-                    last = Instant::now();
-                }
+                tokio::time::timeout(Duration::from_secs(10), slice1_gate.wait_entered())
+                    .await
+                    .expect("single-thread event loop stalled before slice 1 gate");
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                let count = session.with_torrents(|it| it.count());
+                assert_eq!(count, 1);
+                slice1_gate.release();
+
+                tokio::time::timeout(Duration::from_secs(10), slice2_gate.wait_entered())
+                    .await
+                    .expect("single-thread event loop stalled before slice 2 gate");
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                slice2_gate.release();
             })
         };
 
-        let storage_factory = SlowStorageFactory {
-            read_delay_ms: Arc::new(AtomicU64::new(6)),
-            init_delay_ms: 0,
+        let storage_factory = GatedStorageFactory {
+            init_gate: None,
+            read_gates: Arc::new(vec![(1, slice1_gate), (65, slice2_gate)]),
             reads_count: Arc::new(AtomicUsize::new(0)),
         };
 
@@ -184,6 +248,8 @@ fn test_initial_check_single_thread_runtime_stays_responsive() {
             .into_handle()
             .unwrap();
 
+        driver.await.unwrap();
+
         wait_until(
             || {
                 let stats = handle.stats();
@@ -192,26 +258,10 @@ fn test_initial_check_single_thread_runtime_stays_responsive() {
                 }
                 Ok(())
             },
-            Duration::from_secs(10),
+            Duration::from_secs(30),
         )
         .await
         .unwrap();
-
-        stop.store(true, Ordering::Relaxed);
-        heartbeat.await.unwrap();
-
-        // Total check takes >= 144ms (24 * 6ms). Previously on current_thread, the single-thread
-        // reactor stalled for the entire check (0 ticks during check, gap >= 144ms).
-        assert!(
-            tick_count.load(Ordering::Relaxed) >= 10,
-            "expected event loop to keep ticking during check, got {} ticks",
-            tick_count.load(Ordering::Relaxed)
-        );
-        assert!(
-            max_tick_gap_ms.load(Ordering::Relaxed) < 80,
-            "single-thread runtime stalled for {}ms during initial check",
-            max_tick_gap_ms.load(Ordering::Relaxed)
-        );
     });
 }
 
@@ -226,10 +276,11 @@ fn test_initial_check_yields_spawner_and_add_does_not_hold_db_write_lock() {
 
     rt.block_on(async {
         let dir = TempDir::new().unwrap();
-        let piece_len = 65536u32;
+        // 24 x 512 KiB = 12 MiB = 192 x 64 KiB reads (at most 64 reads per 4 MiB slice).
+        let piece_len = 512 * 1024u32;
         create_new_file_with_random_content(
             &dir.path().join("existing.bin"),
-            piece_len as usize * 20,
+            piece_len as usize * 24,
         );
 
         let torrent = create_torrent(
@@ -245,72 +296,107 @@ fn test_initial_check_yields_spawner_and_add_does_not_hold_db_write_lock() {
         let torrent_bytes = torrent.as_bytes().unwrap();
 
         // Only 1 BlockingSpawner permit: verify add_torrent neither holds `db.write()` during
-        // slow storage init nor monopolizes the sole BlockingSpawner permit for the entire check.
+        // storage init nor monopolizes the sole BlockingSpawner permit across all 192 reads.
         let session = Session::new_with_opts(dir.path().to_owned(), minimal_session_opts(1))
             .await
             .unwrap();
 
+        let init_gate = BlockingGate::new();
+        let read1_gate = BlockingGate::new();
+        let _guard = GateReleaseOnDrop(vec![init_gate.clone(), read1_gate.clone()]);
+
         let reads_count = Arc::new(AtomicUsize::new(0));
-        let storage_factory = SlowStorageFactory {
-            read_delay_ms: Arc::new(AtomicU64::new(8)),
-            init_delay_ms: 90,
+        let storage_factory = GatedStorageFactory {
+            init_gate: Some(init_gate.clone()),
+            read_gates: Arc::new(vec![(1, read1_gate.clone())]),
             reads_count: reads_count.clone(),
         };
 
-        // Probe `with_torrents` (`db.read()`) while `add_torrent` is inside `storage.init` (90ms).
-        let session_for_read = session.clone();
-        let db_read_probe = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            let start = Instant::now();
-            session_for_read.with_torrents(|_| ());
-            start.elapsed()
-        });
+        let add_task = {
+            let session = session.clone();
+            tokio::spawn(async move {
+                session
+                    .add_torrent(
+                        AddTorrent::from_bytes(torrent_bytes),
+                        Some(AddTorrentOptions {
+                            overwrite: true,
+                            storage_factory: Some(storage_factory.boxed()),
+                            ..Default::default()
+                        }),
+                    )
+                    .await
+            })
+        };
 
-        let handle = session
-            .add_torrent(
-                AddTorrent::from_bytes(torrent_bytes),
-                Some(AddTorrentOptions {
-                    overwrite: true,
-                    storage_factory: Some(storage_factory.boxed()),
-                    ..Default::default()
-                }),
-            )
+        // Wait until `add_torrent` is paused inside `Storage::init()`, then prove `db.read()`
+        // (`with_torrents`) is not blocked by `db.write()`.
+        tokio::time::timeout(Duration::from_secs(10), init_gate.wait_entered())
             .await
-            .unwrap()
-            .into_handle()
+            .expect("timed out waiting for storage.init");
+
+        let session_for_read = session.clone();
+        let read_probe = tokio::task::spawn_blocking(move || {
+            session_for_read.with_torrents(|it| it.count())
+        });
+        let count_during_init = tokio::time::timeout(Duration::from_secs(2), read_probe)
+            .await
+            .expect("db.read() blocked while storage.init was running")
             .unwrap();
+        assert_eq!(count_during_init, 0);
 
-        let db_read_latency = db_read_probe.await.unwrap();
+        init_gate.release();
+
+        let handle = add_task.await.unwrap().unwrap().into_handle().unwrap();
+
+        // Wait until slice 1 holds the sole BlockingSpawner permit at read #1, enqueue a
+        // waiter on the spawner semaphore, then release read #1 and verify our waiter runs
+        // at or before the end of slice 1 (<= 64 reads) rather than after all 192 reads.
+        tokio::time::timeout(Duration::from_secs(10), read1_gate.wait_entered())
+            .await
+            .expect("timed out waiting for first check read");
+
+        let probe_enqueued = Arc::new(tokio::sync::Notify::new());
+        let probe_task = {
+            let spawner = handle.shared.spawner.clone();
+            let reads_count = reads_count.clone();
+            let handle = handle.clone();
+            let probe_enqueued = probe_enqueued.clone();
+            tokio::spawn(async move {
+                let fut = spawner.spawn_blocking(move || {
+                    (reads_count.load(Ordering::SeqCst), handle.stats().finished)
+                });
+                tokio::pin!(fut);
+                // Poll once so this task registers in the semaphore's FIFO waiter queue
+                // while `read1_gate` still holds the sole permit.
+                std::future::poll_fn(|cx| {
+                    assert!(
+                        fut.as_mut().poll(cx).is_pending(),
+                        "spawner permit was unexpectedly free during active slice"
+                    );
+                    std::task::Poll::Ready(())
+                })
+                .await;
+                probe_enqueued.notify_one();
+                fut.await.unwrap()
+            })
+        };
+
+        probe_enqueued.notified().await;
+        read1_gate.release();
+
+        let (reads_at_probe, finished_at_probe) =
+            tokio::time::timeout(Duration::from_secs(30), probe_task)
+                .await
+                .expect("timed out waiting for spawner permit turnover")
+                .unwrap();
+
         assert!(
-            db_read_latency < Duration::from_millis(40),
-            "db.read() was blocked for {db_read_latency:?} during storage initialization"
+            !finished_at_probe,
+            "initial check monopolized spawner permit until completion"
         );
-
-        // Wait until check is actively reading pieces, then verify the single spawner permit
-        // turns over within one slice (~20ms) instead of blocking until all 20 pieces (~160ms) finish.
-        wait_until(
-            || {
-                if reads_count.load(Ordering::Relaxed) >= 2 {
-                    Ok(())
-                } else {
-                    anyhow::bail!("waiting for reads to start")
-                }
-            },
-            Duration::from_secs(5),
-        )
-        .await
-        .unwrap();
-
-        let permit_wait_start = Instant::now();
-        handle.shared.spawner.spawn_blocking(|| {}).await.unwrap();
-        let permit_wait = permit_wait_start.elapsed();
         assert!(
-            !handle.stats().finished,
-            "check already finished before spawner turnover was measured"
-        );
-        assert!(
-            permit_wait < Duration::from_millis(80),
-            "spawner permit was monopolized for {permit_wait:?}"
+            reads_at_probe <= 64,
+            "expected spawner permit to turn over within one 4 MiB slice (<= 64 reads), got {reads_at_probe}/192 reads"
         );
 
         wait_until(
@@ -321,7 +407,7 @@ fn test_initial_check_yields_spawner_and_add_does_not_hold_db_write_lock() {
                     anyhow::bail!("waiting for check completion")
                 }
             },
-            Duration::from_secs(10),
+            Duration::from_secs(30),
         )
         .await
         .unwrap();
@@ -331,7 +417,7 @@ fn test_initial_check_yields_spawner_and_add_does_not_hold_db_write_lock() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_initial_check_pause_aborts_mid_large_piece_and_resumes_cleanly() {
     let dir = TempDir::new().unwrap();
-    // Single 1 MiB piece = 16 x 64 KiB reads. At 25ms per read, a full piece would take 400ms.
+    // Single 1 MiB piece = 16 x 64 KiB reads.
     let piece_len = 1024 * 1024u32;
     create_new_file_with_random_content(&dir.path().join("large_piece.bin"), piece_len as usize);
 
@@ -351,11 +437,12 @@ async fn test_initial_check_pause_aborts_mid_large_piece_and_resumes_cleanly() {
         .await
         .unwrap();
 
-    let read_delay_ms = Arc::new(AtomicU64::new(25));
+    let read2_gate = BlockingGate::new();
+    let _guard = GateReleaseOnDrop(vec![read2_gate.clone()]);
     let reads_count = Arc::new(AtomicUsize::new(0));
-    let storage_factory = SlowStorageFactory {
-        read_delay_ms: read_delay_ms.clone(),
-        init_delay_ms: 0,
+    let storage_factory = GatedStorageFactory {
+        init_gate: None,
+        read_gates: Arc::new(vec![(2, read2_gate.clone())]),
         reads_count: reads_count.clone(),
     };
 
@@ -373,49 +460,34 @@ async fn test_initial_check_pause_aborts_mid_large_piece_and_resumes_cleanly() {
         .into_handle()
         .unwrap();
 
-    // Wait until 2 of the 16 chunks inside piece 0 have been read, then pause mid-piece.
-    wait_until(
-        || {
-            if reads_count.load(Ordering::Relaxed) >= 2 {
-                Ok(())
-            } else {
-                anyhow::bail!("waiting for mid-piece read")
-            }
-        },
-        Duration::from_secs(5),
-    )
-    .await
-    .unwrap();
+    // Deterministically pause while chunk 2 of 16 inside piece 0 is in flight.
+    tokio::time::timeout(Duration::from_secs(10), read2_gate.wait_entered())
+        .await
+        .expect("timed out waiting for chunk 2 read");
 
-    let pause_start = Instant::now();
     session.pause(&handle).await.unwrap();
+    read2_gate.release();
+
+    // Wait until the aborted blocking check slice exits and releases its spawner permit.
     wait_until(
         || {
-            let is_running = handle.with_state(|s| match s {
-                crate::ManagedTorrentState::Initializing(init) => !init.is_pause_requested(),
-                _ => true,
-            });
-            if is_running {
-                anyhow::bail!("expected paused initializing state");
+            if handle.shared.spawner.semaphore().available_permits() < 2 {
+                anyhow::bail!("waiting for aborted check slice to exit");
             }
             Ok(())
         },
-        Duration::from_secs(2),
+        Duration::from_secs(10),
     )
     .await
     .unwrap();
 
-    // Wait briefly to confirm reads actually stopped mid-piece instead of reading all 16 chunks.
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    let reads_after_pause = reads_count.load(Ordering::Relaxed);
-    assert!(
-        reads_after_pause < 10,
-        "expected pause to abort mid-piece, but {reads_after_pause}/16 chunks were read in {:?}",
-        pause_start.elapsed()
+    let reads_after_pause = reads_count.load(Ordering::SeqCst);
+    assert_eq!(
+        reads_after_pause, 2,
+        "expected pause to abort immediately after chunk 2/16, got {reads_after_pause}/16 reads"
     );
 
-    // Speed up reads and unpause; progress must reset cleanly and finish at exact total_bytes.
-    read_delay_ms.store(0, Ordering::Relaxed);
+    // Unpause; progress must reset cleanly and finish at exact total_bytes.
     session.unpause(&handle).await.unwrap();
 
     wait_until(
@@ -428,7 +500,7 @@ async fn test_initial_check_pause_aborts_mid_large_piece_and_resumes_cleanly() {
                 anyhow::bail!("waiting for resumed check to finish: {:?}", stats.state)
             }
         },
-        Duration::from_secs(5),
+        Duration::from_secs(30),
     )
     .await
     .unwrap();
