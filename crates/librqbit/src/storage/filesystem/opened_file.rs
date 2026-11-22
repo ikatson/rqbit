@@ -226,7 +226,13 @@ impl OpenedFile {
     }
 
     pub fn take_clone(&self) -> anyhow::Result<Self> {
-        let f = std::mem::take(&mut *self.file.write());
+        let f = std::mem::replace(
+            &mut *self.file.write(),
+            OpenedFileLocked {
+                is_padding: true,
+                ..Default::default()
+            },
+        );
         Ok(Self {
             file: RwLock::new(f),
         })
@@ -557,7 +563,30 @@ mod tests {
         of.pwrite_all(0, b"abcd").unwrap();
         of.pread_exact(0, &mut buf).unwrap();
         assert_eq!(&buf, b"abcd");
+
+        let taken = of.take_clone().unwrap();
+        assert!(matches!(
+            of.pwrite_all(0, b"wxyz")
+                .unwrap_err()
+                .downcast_ref::<crate::Error>(),
+            Some(crate::Error::FsFileIsNone)
+        ));
+        assert!(matches!(
+            of.pread_exact(0, &mut buf)
+                .unwrap_err()
+                .downcast_ref::<crate::Error>(),
+            Some(crate::Error::FsFileIsNone)
+        ));
+        assert!(matches!(
+            of.ensure_file_length(32)
+                .unwrap_err()
+                .downcast_ref::<crate::Error>(),
+            Some(crate::Error::FsFileIsNone)
+        ));
+        taken.pread_exact(0, &mut buf).unwrap();
+        assert_eq!(&buf, b"abcd");
         drop(of);
+        drop(taken);
 
         let files: Vec<OpenedFile> = (0..(MAX_CACHED_OPEN_FDS + 100))
             .map(|i| {
