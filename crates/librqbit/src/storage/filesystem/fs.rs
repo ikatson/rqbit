@@ -95,7 +95,8 @@ impl TorrentStorage for FilesystemStorage {
         let f = &self.opened_files.get(file_id).context("no such file")?;
         #[cfg(windows)]
         f.try_mark_sparse()?;
-        Ok(f.lock_read()?.set_len(len)?)
+        let guard = f.lock_read()?;
+        Ok(super::opened_file::preallocate_or_set_len(&guard, len)?)
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
