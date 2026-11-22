@@ -1,5 +1,4 @@
 use std::{
-    fs::OpenOptions,
     io::IoSlice,
     path::{Path, PathBuf},
 };
@@ -8,7 +7,7 @@ use anyhow::Context;
 use tracing::warn;
 
 use crate::{
-    storage::{StorageFactoryExt, filesystem::opened_file::OurFileExt},
+    storage::StorageFactoryExt,
     torrent_state::{ManagedTorrentShared, TorrentMetadata},
 };
 
@@ -62,16 +61,14 @@ impl TorrentStorage for FilesystemStorage {
         self.opened_files
             .get(file_id)
             .context("no such file")?
-            .lock_read()?
             .pread_exact(offset, buf)
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        let of = self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(windows)]
-        return of.try_mark_sparse()?.pwrite_all(offset, buf);
-        #[cfg(not(windows))]
-        return of.lock_read()?.pwrite_all(offset, buf);
+        self.opened_files
+            .get(file_id)
+            .context("no such file")?
+            .pwrite_all(offset, buf)
     }
 
     fn pwrite_all_vectored(
@@ -80,22 +77,24 @@ impl TorrentStorage for FilesystemStorage {
         offset: u64,
         bufs: [IoSlice<'_>; 2],
     ) -> anyhow::Result<usize> {
-        let of = self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(windows)]
-        return of.try_mark_sparse()?.pwrite_all_vectored(offset, bufs);
-        #[cfg(not(windows))]
-        return of.lock_read()?.pwrite_all_vectored(offset, bufs);
+        self.opened_files
+            .get(file_id)
+            .context("no such file")?
+            .pwrite_all_vectored(offset, bufs)
     }
 
-    fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
+    fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()> {
+        if let Some(of) = self.opened_files.get(file_id) {
+            of.close();
+        }
         Ok(std::fs::remove_file(self.output_folder.join(filename))?)
     }
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
-        let f = &self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(windows)]
-        f.try_mark_sparse()?;
-        Ok(f.lock_read()?.set_len(len)?)
+        self.opened_files
+            .get(file_id)
+            .context("no such file")?
+            .ensure_file_length(len)
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
@@ -127,40 +126,22 @@ impl TorrentStorage for FilesystemStorage {
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
-        let mut files = Vec::<OpenedFile>::new();
+        let mut files = Vec::<OpenedFile>::with_capacity(metadata.file_infos.len());
         for file_details in metadata.file_infos.iter() {
-            let mut full_path = self.output_folder.clone();
-            let relative_path = &file_details.relative_filename;
-            full_path.push(relative_path);
-
             if file_details.attrs.padding {
                 files.push(OpenedFile::new_dummy());
                 continue;
-            };
-            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let f = if shared.options.allow_overwrite {
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
-            } else {
-                // create_new does not seem to work with read(true), so calling this twice.
-                OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| {
-                        format!(
-                            "error creating a new file (because allow_overwrite = false) {:?}",
-                            full_path
-                        )
-                    })?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
-            };
-            files.push(OpenedFile::new(full_path.clone(), f));
+            }
+            let mut full_path = self.output_folder.clone();
+            full_path.push(&file_details.relative_filename);
+
+            if !shared.options.allow_overwrite && full_path.symlink_metadata().is_ok() {
+                anyhow::bail!(
+                    "error creating a new file (because allow_overwrite = false) {:?}: file already exists",
+                    full_path
+                );
+            }
+            files.push(OpenedFile::new_lazy(full_path));
         }
 
         self.opened_files = files;

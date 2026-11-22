@@ -1337,21 +1337,23 @@ impl Session {
         let _permit = self.spawner.semaphore().acquire_owned().await?;
 
         let (managed_torrent, metadata) = {
-            let mut g = self.db.write();
-            if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
-                if t.info_hash() == info_hash {
-                    Some((*eid, t.clone()))
-                } else {
-                    None
+            {
+                let g = self.db.read();
+                if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
+                    if t.info_hash() == info_hash {
+                        Some((*eid, t.clone()))
+                    } else {
+                        None
+                    }
+                }) {
+                    return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
                 }
-            }) {
-                return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
-            }
-            if let Some(existing) = g.torrents.get(&id) {
-                bail!(
-                    "torrent id {id} is already used by a different torrent {:?}",
-                    existing.info_hash()
-                );
+                if let Some(existing) = g.torrents.get(&id) {
+                    bail!(
+                        "torrent id {id} is already used by a different torrent {:?}",
+                        existing.info_hash()
+                    );
+                }
             }
 
             let span = debug_span!(parent: self.rs(), "torrent", id);
@@ -1384,12 +1386,32 @@ impl Session {
                 client_name_and_version: self.client_name_and_version.clone(),
             });
 
+            let storage = self
+                .spawner
+                .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?;
+
+            let mut g = self.db.write();
+            if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
+                if t.info_hash() == info_hash {
+                    Some((*eid, t.clone()))
+                } else {
+                    None
+                }
+            }) {
+                return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
+            }
+            if let Some(existing) = g.torrents.get(&id) {
+                bail!(
+                    "torrent id {id} is already used by a different torrent {:?}",
+                    existing.info_hash()
+                );
+            }
+
             let initializing = Arc::new(TorrentStateInitializing::new(
                 minfo.clone(),
                 metadata.clone(),
                 only_files.clone(),
-                self.spawner
-                    .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?,
+                storage,
                 false,
             ));
             let handle = Arc::new(ManagedTorrent {

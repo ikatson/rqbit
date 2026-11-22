@@ -1,14 +1,49 @@
 use std::{
-    fs::File,
+    fs::{File, OpenOptions},
     io::IoSlice,
     ops::{Deref, DerefMut},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use anyhow::Context;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::Error;
+
+static CACHED_OPEN_FDS: AtomicUsize = AtomicUsize::new(0);
+const MAX_CACHED_OPEN_FDS: usize = 4096;
+
+#[derive(Debug)]
+struct TrackedFile(File);
+
+impl TrackedFile {
+    fn new(file: File) -> Self {
+        CACHED_OPEN_FDS.fetch_add(1, Ordering::Relaxed);
+        Self(file)
+    }
+}
+
+impl Drop for TrackedFile {
+    fn drop(&mut self) {
+        CACHED_OPEN_FDS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn open_rw_create(path: &Path) -> std::io::Result<File> {
+    let mut opts = OpenOptions::new();
+    opts.create(true).truncate(false).read(true).write(true);
+    match opts.open(path) {
+        Ok(f) => Ok(f),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            opts.open(path)
+        }
+        Err(e) => Err(e),
+    }
+}
 
 pub trait OurFileExt {
     fn pwrite_all_vectored(&self, offset: u64, bufs: [IoSlice<'_>; 2]) -> anyhow::Result<usize>;
@@ -132,25 +167,12 @@ fn pwrite_all_unvectored(
 
 #[derive(Default, Debug)]
 struct OpenedFileLocked {
-    #[allow(unused)]
     path: PathBuf,
-    fd: Option<File>,
+    fd: Option<TrackedFile>,
+    read_only: bool,
+    is_padding: bool,
     #[cfg(windows)]
     tried_marking_sparse: bool,
-}
-
-impl Deref for OpenedFileLocked {
-    type Target = Option<File>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.fd
-    }
-}
-
-impl DerefMut for OpenedFileLocked {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.fd
-    }
 }
 
 #[derive(Debug)]
@@ -159,11 +181,27 @@ pub(crate) struct OpenedFile {
 }
 
 impl OpenedFile {
+    pub fn new_lazy(path: PathBuf) -> Self {
+        Self {
+            file: RwLock::new(OpenedFileLocked {
+                path,
+                fd: None,
+                read_only: false,
+                is_padding: false,
+                #[cfg(windows)]
+                tried_marking_sparse: false,
+            }),
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn new(path: PathBuf, f: File) -> Self {
         Self {
             file: RwLock::new(OpenedFileLocked {
                 path,
-                fd: Some(f),
+                fd: Some(TrackedFile::new(f)),
+                read_only: false,
+                is_padding: false,
                 #[cfg(windows)]
                 tried_marking_sparse: false,
             }),
@@ -172,49 +210,249 @@ impl OpenedFile {
 
     pub fn new_dummy() -> Self {
         Self {
-            file: RwLock::new(Default::default()),
+            file: RwLock::new(OpenedFileLocked {
+                path: PathBuf::new(),
+                fd: None,
+                read_only: false,
+                is_padding: true,
+                #[cfg(windows)]
+                tried_marking_sparse: false,
+            }),
         }
     }
 
+    pub fn close(&self) {
+        self.file.write().fd = None;
+    }
+
     pub fn take_clone(&self) -> anyhow::Result<Self> {
-        let f = std::mem::take(&mut *self.file.write());
+        let f = std::mem::replace(
+            &mut *self.file.write(),
+            OpenedFileLocked {
+                is_padding: true,
+                ..Default::default()
+            },
+        );
         Ok(Self {
             file: RwLock::new(f),
         })
     }
 
-    pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
-        RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
-            .ok()
-            .ok_or(Error::FsFileIsNone)
-    }
-
-    #[allow(dead_code)]
-    pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
-        RwLockWriteGuard::try_map(self.file.write(), |f| f.as_mut())
-            .ok()
-            .ok_or(Error::FsFileIsNone)
-    }
-
-    #[cfg(windows)]
-    pub fn try_mark_sparse(&self) -> crate::Result<impl Deref<Target = File>> {
+    pub fn pread_exact(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         {
             let g = self.file.read();
-            if g.tried_marking_sparse {
-                return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
-                    .ok()
-                    .ok_or(Error::FsFileIsNone);
+            if g.is_padding {
+                return Err(Error::FsFileIsNone.into());
+            }
+            if let Some(tf) = &g.fd {
+                return tf.0.pread_exact(offset, buf);
             }
         }
         let mut g = self.file.write();
+        if g.is_padding {
+            return Err(Error::FsFileIsNone.into());
+        }
+        if g.fd.is_none() {
+            let (f, read_only) = match OpenOptions::new().read(true).write(true).open(&g.path) {
+                Ok(f) => (f, false),
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    (OpenOptions::new().read(true).open(&g.path)?, true)
+                }
+                Err(e) => return Err(e.into()),
+            };
+            if CACHED_OPEN_FDS.load(Ordering::Relaxed) < MAX_CACHED_OPEN_FDS {
+                g.fd = Some(TrackedFile::new(f));
+                g.read_only = read_only;
+            } else {
+                drop(g);
+                return f.pread_exact(offset, buf);
+            }
+        }
+        let g = RwLockWriteGuard::downgrade(g);
+        g.fd.as_ref()
+            .ok_or(Error::FsFileIsNone)?
+            .0
+            .pread_exact(offset, buf)
+    }
+
+    pub fn pwrite_all(&self, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
+        {
+            let g = self.file.read();
+            if g.is_padding {
+                return Err(Error::FsFileIsNone.into());
+            }
+            #[cfg(windows)]
+            let ready = g.fd.is_some() && !g.read_only && g.tried_marking_sparse;
+            #[cfg(not(windows))]
+            let ready = g.fd.is_some() && !g.read_only;
+            if ready && let Some(tf) = &g.fd {
+                return tf.0.pwrite_all(offset, buf);
+            }
+        }
+        let mut g = self.file.write();
+        if g.is_padding {
+            return Err(Error::FsFileIsNone.into());
+        }
+        if g.fd.is_none() || g.read_only {
+            g.fd = None;
+            let f = open_rw_create(&g.path)
+                .with_context(|| format!("error opening {:?} in read/write mode", g.path))?;
+            #[cfg(windows)]
+            if !g.tried_marking_sparse {
+                g.tried_marking_sparse = true;
+                let marked = super::sparse::mark_file_sparse(&f);
+                tracing::debug!(path=?g.path, marked, "marking sparse");
+            }
+            if CACHED_OPEN_FDS.load(Ordering::Relaxed) < MAX_CACHED_OPEN_FDS {
+                g.fd = Some(TrackedFile::new(f));
+                g.read_only = false;
+            } else {
+                drop(g);
+                return f.pwrite_all(offset, buf);
+            }
+        }
+        #[cfg(windows)]
         if !g.tried_marking_sparse {
             g.tried_marking_sparse = true;
-            let f = g.fd.as_ref().ok_or(Error::FsFileIsNone)?;
+            let f = &g.fd.as_ref().ok_or(Error::FsFileIsNone)?.0;
             let marked = super::sparse::mark_file_sparse(f);
             tracing::debug!(path=?g.path, marked, "marking sparse");
         }
-        let g = parking_lot::RwLockWriteGuard::downgrade(g);
-        Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
+        let g = RwLockWriteGuard::downgrade(g);
+        g.fd.as_ref()
+            .ok_or(Error::FsFileIsNone)?
+            .0
+            .pwrite_all(offset, buf)
+    }
+
+    pub fn pwrite_all_vectored(
+        &self,
+        offset: u64,
+        bufs: [IoSlice<'_>; 2],
+    ) -> anyhow::Result<usize> {
+        {
+            let g = self.file.read();
+            if g.is_padding {
+                return Err(Error::FsFileIsNone.into());
+            }
+            #[cfg(windows)]
+            let ready = g.fd.is_some() && !g.read_only && g.tried_marking_sparse;
+            #[cfg(not(windows))]
+            let ready = g.fd.is_some() && !g.read_only;
+            if ready && let Some(tf) = &g.fd {
+                return tf.0.pwrite_all_vectored(offset, bufs);
+            }
+        }
+        let mut g = self.file.write();
+        if g.is_padding {
+            return Err(Error::FsFileIsNone.into());
+        }
+        if g.fd.is_none() || g.read_only {
+            g.fd = None;
+            let f = open_rw_create(&g.path)
+                .with_context(|| format!("error opening {:?} in read/write mode", g.path))?;
+            #[cfg(windows)]
+            if !g.tried_marking_sparse {
+                g.tried_marking_sparse = true;
+                let marked = super::sparse::mark_file_sparse(&f);
+                tracing::debug!(path=?g.path, marked, "marking sparse");
+            }
+            if CACHED_OPEN_FDS.load(Ordering::Relaxed) < MAX_CACHED_OPEN_FDS {
+                g.fd = Some(TrackedFile::new(f));
+                g.read_only = false;
+            } else {
+                drop(g);
+                return f.pwrite_all_vectored(offset, bufs);
+            }
+        }
+        #[cfg(windows)]
+        if !g.tried_marking_sparse {
+            g.tried_marking_sparse = true;
+            let f = &g.fd.as_ref().ok_or(Error::FsFileIsNone)?.0;
+            let marked = super::sparse::mark_file_sparse(f);
+            tracing::debug!(path=?g.path, marked, "marking sparse");
+        }
+        let g = RwLockWriteGuard::downgrade(g);
+        g.fd.as_ref()
+            .ok_or(Error::FsFileIsNone)?
+            .0
+            .pwrite_all_vectored(offset, bufs)
+    }
+
+    pub fn ensure_file_length(&self, len: u64) -> anyhow::Result<()> {
+        let mut g = self.file.write();
+        if g.is_padding {
+            return Err(Error::FsFileIsNone.into());
+        }
+        if g.fd.is_some() && !g.read_only {
+            #[cfg(windows)]
+            if !g.tried_marking_sparse {
+                g.tried_marking_sparse = true;
+                let f = &g.fd.as_ref().ok_or(Error::FsFileIsNone)?.0;
+                let marked = super::sparse::mark_file_sparse(f);
+                tracing::debug!(path=?g.path, marked, "marking sparse");
+            }
+            if let Some(tf) = &g.fd {
+                tf.0.set_len(len)?;
+            }
+            return Ok(());
+        }
+        g.fd = None;
+        let f = open_rw_create(&g.path)
+            .with_context(|| format!("error opening {:?} in read/write mode", g.path))?;
+        #[cfg(windows)]
+        if !g.tried_marking_sparse {
+            g.tried_marking_sparse = true;
+            let marked = super::sparse::mark_file_sparse(&f);
+            tracing::debug!(path=?g.path, marked, "marking sparse");
+        }
+        f.set_len(len)?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn lock_read(&self) -> anyhow::Result<impl Deref<Target = File>> {
+        {
+            let g = self.file.read();
+            if g.is_padding {
+                return Err(Error::FsFileIsNone.into());
+            }
+            if g.fd.is_some() {
+                return RwLockReadGuard::try_map(g, |f| f.fd.as_ref().map(|tf| &tf.0))
+                    .ok()
+                    .ok_or_else(|| Error::FsFileIsNone.into());
+            }
+        }
+        let mut g = self.file.write();
+        if g.is_padding {
+            return Err(Error::FsFileIsNone.into());
+        }
+        if g.fd.is_none() {
+            let f = open_rw_create(&g.path)?;
+            g.fd = Some(TrackedFile::new(f));
+            g.read_only = false;
+        }
+        let g = RwLockWriteGuard::downgrade(g);
+        RwLockReadGuard::try_map(g, |f| f.fd.as_ref().map(|tf| &tf.0))
+            .ok()
+            .ok_or_else(|| Error::FsFileIsNone.into())
+    }
+
+    #[allow(dead_code)]
+    pub fn lock_write(&self) -> anyhow::Result<impl DerefMut<Target = File>> {
+        let mut g = self.file.write();
+        if g.is_padding {
+            return Err(Error::FsFileIsNone.into());
+        }
+        if g.fd.is_none() || g.read_only {
+            g.fd = None;
+            let f = open_rw_create(&g.path)?;
+            g.fd = Some(TrackedFile::new(f));
+            g.read_only = false;
+        }
+        RwLockWriteGuard::try_map(g, |f| f.fd.as_mut().map(|tf| &mut tf.0))
+            .ok()
+            .ok_or_else(|| Error::FsFileIsNone.into())
     }
 }
 
@@ -301,6 +539,72 @@ mod tests {
             "test_pwrite_all_unvectored_past_2gib",
             (1u64 << 31) + 12345,
             super::pwrite_all_unvectored,
+        );
+    }
+
+    #[test]
+    fn test_opened_file_lazy_and_fd_bounded() {
+        use super::{CACHED_OPEN_FDS, MAX_CACHED_OPEN_FDS, OpenedFile};
+        use std::sync::atomic::Ordering;
+
+        let td = TempDir::with_prefix("test_lazy_opened_file").unwrap();
+        let nested = td.path().join("sub/dir/file.bin");
+
+        let of = OpenedFile::new_lazy(nested.clone());
+        let mut buf = [0u8; 4];
+        assert!(of.pread_exact(0, &mut buf).is_err());
+        assert!(!nested.exists());
+
+        of.ensure_file_length(16).unwrap();
+        assert!(nested.exists());
+        assert_eq!(nested.metadata().unwrap().len(), 16);
+        assert!(of.file.read().fd.is_none());
+
+        of.pwrite_all(0, b"abcd").unwrap();
+        of.pread_exact(0, &mut buf).unwrap();
+        assert_eq!(&buf, b"abcd");
+
+        let taken = of.take_clone().unwrap();
+        assert!(matches!(
+            of.pwrite_all(0, b"wxyz")
+                .unwrap_err()
+                .downcast_ref::<crate::Error>(),
+            Some(crate::Error::FsFileIsNone)
+        ));
+        assert!(matches!(
+            of.pread_exact(0, &mut buf)
+                .unwrap_err()
+                .downcast_ref::<crate::Error>(),
+            Some(crate::Error::FsFileIsNone)
+        ));
+        assert!(matches!(
+            of.ensure_file_length(32)
+                .unwrap_err()
+                .downcast_ref::<crate::Error>(),
+            Some(crate::Error::FsFileIsNone)
+        ));
+        taken.pread_exact(0, &mut buf).unwrap();
+        assert_eq!(&buf, b"abcd");
+        drop(of);
+        drop(taken);
+
+        let files: Vec<OpenedFile> = (0..(MAX_CACHED_OPEN_FDS + 100))
+            .map(|i| {
+                let p = td.path().join(format!("f_{i}.bin"));
+                let f = OpenedFile::new_lazy(p);
+                f.pwrite_all(0, b"x").unwrap();
+                f
+            })
+            .collect();
+        let cached_in_vec = files.iter().filter(|f| f.file.read().fd.is_some()).count();
+        assert!(cached_in_vec <= MAX_CACHED_OPEN_FDS);
+        assert!(CACHED_OPEN_FDS.load(Ordering::Relaxed) <= MAX_CACHED_OPEN_FDS + 64);
+        for f in &files {
+            f.close();
+        }
+        assert_eq!(
+            files.iter().filter(|f| f.file.read().fd.is_some()).count(),
+            0
         );
     }
 }
