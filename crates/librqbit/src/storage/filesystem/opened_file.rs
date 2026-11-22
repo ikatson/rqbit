@@ -10,6 +10,59 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::Error;
 
+pub(crate) fn preallocate_or_set_len(file: &File, len: u64) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    if len > 0
+        && let Ok(off_len) = nix::libc::off_t::try_from(len)
+    {
+        use std::os::fd::AsRawFd;
+        // Preallocate contiguous extents so random 16 KiB BitTorrent chunk writes overwrite
+        // allocated clusters in-place instead of splitting sparse holes into thousands of
+        // fragmented extent/MFT runlist entries during writeback.
+        loop {
+            let rc = unsafe { nix::libc::fallocate(file.as_raw_fd(), 0, 0, off_len) };
+            if rc == 0 {
+                if let Ok(meta) = file.metadata()
+                    && meta.len() == len
+                {
+                    return Ok(());
+                }
+                break;
+            }
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(nix::libc::EINTR) {
+                continue;
+            }
+            tracing::debug!(
+                ?err,
+                len,
+                "fallocate failed or unsupported, falling back to set_len"
+            );
+            break;
+        }
+    }
+    file.set_len(len)
+}
+
+#[cfg(unix)]
+fn is_transient_write_errno(errno: nix::errno::Errno) -> bool {
+    matches!(
+        errno,
+        nix::errno::Errno::EINTR
+            | nix::errno::Errno::EAGAIN
+            | nix::errno::Errno::ENOMEM
+            | nix::errno::Errno::EIO
+    )
+}
+
+#[cfg(unix)]
+fn is_transient_write_io_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.raw_os_error(),
+        Some(nix::libc::EINTR | nix::libc::EAGAIN | nix::libc::ENOMEM | nix::libc::EIO)
+    )
+}
+
 pub trait OurFileExt {
     fn pwrite_all_vectored(&self, offset: u64, bufs: [IoSlice<'_>; 2]) -> anyhow::Result<usize>;
     fn pread_exact(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<()>;
@@ -19,14 +72,30 @@ pub trait OurFileExt {
 impl OurFileExt for File {
     #[cfg(unix)]
     fn pwrite_all_vectored(&self, offset: u64, bufs: [IoSlice<'_>; 2]) -> anyhow::Result<usize> {
+        let total = bufs[0].len() + bufs[1].len();
+        if total == 0 {
+            return Ok(0);
+        }
         // off_t is 32 bits on 32-bit Android (and on 32-bit Linux built without
         // _FILE_OFFSET_BITS=64), so pwritev cannot address anything past 2 GiB there.
         // pwrite_all goes through pwrite64 and takes the u64 as is, so past that point
         // write the two buffers one after the other instead.
         match nix::libc::off_t::try_from(offset) {
-            Ok(offset) => {
-                nix::sys::uio::pwritev(self, &bufs, offset).context("error calling pwritev")
-            }
+            Ok(off) => match nix::sys::uio::pwritev(self, &bufs, off) {
+                Ok(n) if n == total => Ok(total),
+                Ok(_short) => pwrite_all_unvectored(self, offset, bufs),
+                Err(errno) if is_transient_write_errno(errno) => {
+                    tracing::warn!(
+                        ?errno,
+                        offset,
+                        len = total,
+                        "transient error in pwritev, syncing and falling back to unvectored pwrite_all"
+                    );
+                    let _ = self.sync_data();
+                    pwrite_all_unvectored(self, offset, bufs)
+                }
+                Err(errno) => Err(errno).context("error calling pwritev"),
+            },
             Err(_) => pwrite_all_unvectored(self, offset, bufs),
         }
     }
@@ -90,7 +159,29 @@ impl OurFileExt for File {
     #[cfg(unix)]
     fn pwrite_all(&self, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
         use std::os::unix::fs::FileExt;
-        Ok(self.write_all_at(buf, offset)?)
+        const BACKOFF_MS: [u64; 3] = [10, 50, 150];
+        let mut last_err = match self.write_all_at(buf, offset) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_transient_write_io_error(&e) => e,
+            Err(e) => return Err(e.into()),
+        };
+        for delay_ms in BACKOFF_MS {
+            tracing::warn!(
+                err = ?last_err,
+                offset,
+                len = buf.len(),
+                delay_ms,
+                "transient write error in pwrite_all, retrying after sync and backoff"
+            );
+            let _ = self.sync_data();
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            match self.write_all_at(buf, offset) {
+                Ok(()) => return Ok(()),
+                Err(e) if is_transient_write_io_error(&e) => last_err = e,
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Err(last_err.into())
     }
 
     #[cfg(windows)]
@@ -302,5 +393,46 @@ mod tests {
             (1u64 << 31) + 12345,
             super::pwrite_all_unvectored,
         );
+    }
+
+    #[test]
+    fn test_preallocate_or_set_len() {
+        let td = TempDir::with_prefix("test_prealloc").unwrap();
+        let path = td.path().join("prealloc.bin");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+
+        super::preallocate_or_set_len(&file, 65536).unwrap();
+        let meta = file.metadata().unwrap();
+        assert_eq!(meta.len(), 65536);
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert!(
+                meta.blocks() >= 65536 / 512,
+                "expected >= 128 512B blocks from fallocate, got {}",
+                meta.blocks()
+            );
+        }
+
+        let n = file
+            .pwrite_all_vectored(100, [IoSlice::new(b"hello "), IoSlice::new(b"world")])
+            .unwrap();
+        assert_eq!(n, 11);
+
+        let mut read_back = [0u8; 11];
+        file.pread_exact(100, &mut read_back).unwrap();
+        assert_eq!(&read_back, b"hello world");
+
+        // Shrinking an existing oversized file falls back to set_len.
+        super::preallocate_or_set_len(&file, 256).unwrap();
+        assert_eq!(file.metadata().unwrap().len(), 256);
+        file.pread_exact(100, &mut read_back).unwrap();
+        assert_eq!(&read_back, b"hello world");
     }
 }
