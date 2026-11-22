@@ -377,7 +377,7 @@ impl ManagedTorrent {
                                 .await
                                 .context("bug: concurrent init semaphore was closed")?;
 
-                            let check_result = init.check().await;
+                            let check_result = init.check(&token).await;
                             init.finish_check();
 
                             match check_result {
@@ -396,7 +396,7 @@ impl ManagedTorrent {
                                     _start(&t, peer_rx, start_paused, session, Some(g), token)
                                 }
                                 Err(err) => {
-                                    if init.is_pause_requested() {
+                                    if init.is_pause_requested() || token.is_cancelled() {
                                         debug!("initial check paused");
                                         t.state_change_notify.notify_waiters();
                                         return Ok(());
@@ -434,9 +434,11 @@ impl ManagedTorrent {
                         t.shared.clone(),
                         metadata.clone(),
                         g.only_files.clone(),
-                        t.shared
-                            .storage_factory
-                            .create_and_init(t.shared(), &metadata)?,
+                        t.shared.spawner.block_in_place(|| {
+                            t.shared
+                                .storage_factory
+                                .create_and_init(t.shared(), &metadata)
+                        })?,
                         true,
                     ));
                     g.state = ManagedTorrentState::Initializing(initializing.clone());
