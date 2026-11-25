@@ -145,6 +145,28 @@ async fn udp_tracker_to_socket_addrs(
     Ok(res)
 }
 
+/// The most of an HTTP tracker's response that is read. A response naming a few hundred peers
+/// is a few KB.
+const MAX_TRACKER_RESPONSE_BYTES: usize = 2 << 20;
+
+/// A response's body, at most `max` bytes of it (more is an error, read no further).
+async fn read_body_capped(mut response: reqwest::Response, max: usize) -> anyhow::Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|len| len > max as u64)
+    {
+        bail!("tracker response larger than {max} bytes");
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() + chunk.len() > max {
+            bail!("tracker response larger than {max} bytes");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 impl TrackerComms {
     // TODO: fix too many args
     #[allow(clippy::too_many_arguments)]
@@ -302,7 +324,7 @@ impl TrackerComms {
         if !response.status().is_success() {
             anyhow::bail!("tracker responded with {:?}", response.status());
         }
-        let bytes = response.bytes().await?;
+        let bytes = read_body_capped(response, MAX_TRACKER_RESPONSE_BYTES).await?;
         if let Ok((error, _)) =
             bencode::from_bytes_with_rest::<tracker_comms_http::TrackerError>(&bytes)
         {
@@ -449,7 +471,43 @@ impl TrackerComms {
 mod tests {
     use std::net::SocketAddr;
 
-    use super::{UdpTrackerResolveResult, udp_tracker_to_socket_addrs};
+    use super::{UdpTrackerResolveResult, read_body_capped, udp_tracker_to_socket_addrs};
+
+    /// A server on loopback that answers one request with `body`, with or without its length.
+    async fn answer_once(body: Vec<u8>, with_length: bool) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut req = [0u8; 1024];
+            let _ = s.read(&mut req).await;
+            let head = if with_length {
+                format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
+            } else {
+                "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_owned()
+            };
+            let _ = s.write_all(head.as_bytes()).await;
+            let _ = s.write_all(&body).await;
+            let _ = s.shutdown().await;
+        });
+        format!("http://{addr}/announce")
+    }
+
+    #[tokio::test]
+    async fn a_tracker_response_is_read_up_to_the_cap() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        for with_length in [true, false] {
+            let url = answer_once(b"d8:intervali60ee".to_vec(), with_length).await;
+            let r = client.get(url).send().await.unwrap();
+            assert_eq!(read_body_capped(r, 16).await.unwrap(), b"d8:intervali60ee");
+
+            let url = answer_once(vec![b'x'; 100_000], with_length).await;
+            let r = client.get(url).send().await.unwrap();
+            let err = read_body_capped(r, 1000).await.unwrap_err();
+            assert!(format!("{err:#}").contains("larger than"), "{err:#}");
+        }
+    }
 
     #[tokio::test]
     async fn a_udp_trackers_addresses_are_only_the_allowed_ones() {
