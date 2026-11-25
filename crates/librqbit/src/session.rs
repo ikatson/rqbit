@@ -151,6 +151,7 @@ pub struct Session {
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
     client_name_and_version: String,
+    max_torrent_file_size: Option<usize>,
 }
 
 /// A 40 character hex string is a v1 info hash. Checking the length alone
@@ -163,6 +164,7 @@ fn is_bare_info_hash(s: &str) -> bool {
 async fn torrent_from_url(
     reqwest_client: &reqwest::Client,
     url: &str,
+    max_size: Option<usize>,
 ) -> anyhow::Result<ParsedTorrentFile> {
     let response = reqwest_client
         .get(url)
@@ -172,11 +174,49 @@ async fn torrent_from_url(
     if !response.status().is_success() {
         bail!("GET {} returned {}", url, response.status())
     }
-    let b = response
-        .bytes()
-        .await
-        .with_context(|| format!("error reading response body from {url}"))?;
+    let b = read_torrent_response_body(response, url, max_size).await?;
     torrent_from_bytes(b).context("error decoding torrent")
+}
+
+async fn read_torrent_response_body(
+    response: reqwest::Response,
+    url: &str,
+    max_size: Option<usize>,
+) -> anyhow::Result<Bytes> {
+    let b = match max_size {
+        None => response
+            .bytes()
+            .await
+            .with_context(|| format!("error reading response body from {url}"))?,
+        Some(max_size) => {
+            if response
+                .content_length()
+                .is_some_and(|content_length| content_length > max_size as u64)
+            {
+                bail!(
+                    "torrent response from {url} exceeds the configured size limit of {max_size} bytes"
+                );
+            }
+
+            let mut body = bytes::BytesMut::new();
+            let mut response = response;
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .with_context(|| format!("error reading response body from {url}"))?
+            {
+                let new_len = body.len().saturating_add(chunk.len());
+                if new_len > max_size {
+                    bail!(
+                        "torrent response from {url} exceeds the configured size limit of {max_size} bytes"
+                    );
+                }
+                body.extend_from_slice(&chunk);
+            }
+            body.freeze()
+        }
+    };
+    Ok(b)
 }
 
 fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
@@ -486,6 +526,10 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+
+    /// Optional maximum size for torrent files fetched from HTTP(S) URLs.
+    /// No limit is applied by default.
+    pub max_torrent_file_size: Option<usize>,
 }
 
 impl Default for SessionOptions {
@@ -514,6 +558,7 @@ impl Default for SessionOptions {
             disable_local_service_discovery: false,
             ipv4_only: false,
             client_name_and_version: None,
+            max_torrent_file_size: None,
         }
     }
 }
@@ -813,6 +858,7 @@ impl Session {
                 disable_trackers: opts.disable_trackers,
                 peer_limit: opts.peer_limit,
                 client_name_and_version,
+                max_torrent_file_size: opts.max_torrent_file_size,
 
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
@@ -1134,7 +1180,8 @@ impl Session {
                         AddTorrent::Url(url)
                             if url.starts_with("http://") || url.starts_with("https://") =>
                         {
-                            torrent_from_url(&self.reqwest_client, &url).await?
+                            torrent_from_url(&self.reqwest_client, &url, self.max_torrent_file_size)
+                                .await?
                         }
                         AddTorrent::Url(url) => {
                             bail!(
@@ -1826,11 +1873,73 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+
+    use anyhow::Context;
     use buffers::ByteBuf;
     use itertools::Itertools;
     use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    use super::{is_bare_info_hash, torrent_file_from_info_bytes};
+    use super::{is_bare_info_hash, read_torrent_response_body, torrent_file_from_info_bytes};
+
+    async fn local_response(raw_response: Vec<u8>) -> (reqwest::Response, String) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            let _ = socket.read(&mut request).await;
+            socket.write_all(&raw_response).await.unwrap();
+        });
+        let url = format!("http://{addr}/torrent");
+        let response = reqwest::Client::new().get(&url).send().await.unwrap();
+        (response, url)
+    }
+
+    #[tokio::test]
+    async fn torrent_response_content_length_is_checked_before_reading() {
+        let (response, url) = local_response(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef".to_vec(),
+        )
+        .await;
+
+        let error = read_torrent_response_body(response, &url, Some(5))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("size limit of 5 bytes"));
+    }
+
+    #[tokio::test]
+    async fn torrent_response_chunked_body_is_checked_incrementally() {
+        let (response, url) = local_response(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n".to_vec(),
+        )
+        .await;
+
+        let error = read_torrent_response_body(response, &url, Some(5))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("size limit of 5 bytes"));
+    }
+
+    #[tokio::test]
+    async fn torrent_response_without_limit_preserves_large_body() -> anyhow::Result<()> {
+        let body_size = 12 * 1024 * 1024;
+        let mut response_bytes =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {body_size}\r\nConnection: close\r\n\r\n")
+                .into_bytes();
+        response_bytes.resize(response_bytes.len() + body_size, b'a');
+        let (response, url) = local_response(response_bytes).await;
+
+        let body = read_torrent_response_body(response, &url, None)
+            .await
+            .context("read response")?;
+        assert_eq!(body.len(), body_size);
+        Ok(())
+    }
 
     #[test]
     fn test_is_bare_info_hash() {
