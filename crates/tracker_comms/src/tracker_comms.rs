@@ -102,19 +102,22 @@ enum UdpTrackerResolveResult {
     Two(SocketAddrV4, SocketAddrV6),
 }
 
+/// A UDP tracker's addresses, of those `allowed` lets through (the client's filter).
 async fn udp_tracker_to_socket_addrs(
     host: url::Host<&str>,
     port: u16,
+    allowed: impl Fn(SocketAddr) -> bool,
 ) -> anyhow::Result<UdpTrackerResolveResult> {
     let res = match host {
         url::Host::Domain(name) => {
-            // Use the first IPv4 and the first IPv6 addresses only.
+            // Use the first IPv4 and the first IPv6 addresses only, of the allowed ones.
 
             let mut v4: Option<SocketAddrV4> = None;
             let mut v6: Option<SocketAddrV6> = None;
             for addr in tokio::net::lookup_host((name, port))
                 .await
                 .with_context(|| format!("error looking up hostname {name}"))?
+                .filter(|addr| allowed(*addr))
             {
                 match (v4, v6, addr) {
                     (None, _, SocketAddr::V4(addr)) => v4 = Some(addr),
@@ -126,7 +129,7 @@ async fn udp_tracker_to_socket_addrs(
                 (Some(v4), Some(v6)) => UdpTrackerResolveResult::Two(v4, v6),
                 (Some(v4), None) => UdpTrackerResolveResult::One(v4.into()),
                 (None, Some(v6)) => UdpTrackerResolveResult::One(v6.into()),
-                _ => anyhow::bail!("zero addresses returned looking up {name}"),
+                _ => anyhow::bail!("no usable addresses returned looking up {name}"),
             };
             trace!(?res, "resolved");
             res
@@ -134,6 +137,11 @@ async fn udp_tracker_to_socket_addrs(
         url::Host::Ipv4(addr) => UdpTrackerResolveResult::One((addr, port).into()),
         url::Host::Ipv6(addr) => UdpTrackerResolveResult::One((addr, port).into()),
     };
+    if let UdpTrackerResolveResult::One(addr) = res
+        && !allowed(addr)
+    {
+        anyhow::bail!("tracker address {addr} refused by the filter");
+    }
     Ok(res)
 }
 
@@ -341,7 +349,7 @@ impl TrackerComms {
 
             // This should retry forever until the addrs are resolved.
             let addrs = (async || {
-                udp_tracker_to_socket_addrs(host.clone(), port)
+                udp_tracker_to_socket_addrs(host.clone(), port, |a| client.allows(a))
                     .instrument(trace_span!("resolve", ?host))
                     .await
                     .or_else(|err| prev_addrs.ok_or(err))
@@ -434,5 +442,40 @@ impl TrackerComms {
                 Err(e)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use super::{UdpTrackerResolveResult, udp_tracker_to_socket_addrs};
+
+    #[tokio::test]
+    async fn a_udp_trackers_addresses_are_only_the_allowed_ones() {
+        let not_loopback = |a: SocketAddr| !a.ip().is_loopback();
+        let ip4 = |s: &str| url::Host::Ipv4(s.parse().unwrap());
+        for refused in [
+            url::Host::Domain("localhost"),
+            ip4("127.0.0.1"),
+            url::Host::Ipv6("::1".parse().unwrap()),
+        ] {
+            let r = udp_tracker_to_socket_addrs(refused.clone(), 6969, not_loopback).await;
+            assert!(r.is_err(), "{refused:?}: {r:?}");
+        }
+        let all = |_: SocketAddr| true;
+        assert!(matches!(
+            udp_tracker_to_socket_addrs(ip4("127.0.0.1"), 6969, all).await,
+            Ok(UdpTrackerResolveResult::One(a)) if a == "127.0.0.1:6969".parse().unwrap()
+        ));
+        assert!(
+            udp_tracker_to_socket_addrs(url::Host::Domain("localhost"), 6969, all)
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            udp_tracker_to_socket_addrs(ip4("203.0.113.7"), 6969, not_loopback).await,
+            Ok(UdpTrackerResolveResult::One(_))
+        ));
     }
 }

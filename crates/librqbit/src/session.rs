@@ -70,7 +70,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
-use tracker_comms::{TrackerComms, UdpTrackerClient};
+use tracker_comms::{TrackerComms, UdpTrackerAddrFilter, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
@@ -486,6 +486,11 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+
+    /// Asked about every address a UDP tracker is to be sent to: each address its name
+    /// resolves to (only the allowed ones are used), or the address the tracker's URL gives.
+    /// One it refuses is sent nothing. HTTP trackers are not asked. None: every address.
+    pub udp_tracker_filter: Option<UdpTrackerAddrFilter>,
 }
 
 impl Default for SessionOptions {
@@ -514,6 +519,7 @@ impl Default for SessionOptions {
             disable_local_service_discovery: false,
             ipv4_only: false,
             client_name_and_version: None,
+            udp_tracker_filter: None,
         }
     }
 }
@@ -765,9 +771,13 @@ impl Session {
                 None
             };
 
-            let udp_tracker_client = UdpTrackerClient::new(token.clone(), bind_device.as_ref())
-                .await
-                .context("error creating UDP tracker client")?;
+            let udp_tracker_client = UdpTrackerClient::new_with_filter(
+                token.clone(),
+                bind_device.as_ref(),
+                opts.udp_tracker_filter,
+            )
+            .await
+            .context("error creating UDP tracker client")?;
 
             let lsd = {
                 if opts.disable_local_service_discovery {
