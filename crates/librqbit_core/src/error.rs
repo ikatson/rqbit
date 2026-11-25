@@ -12,6 +12,10 @@ pub enum Error {
     BadTorrentSeparatorInName,
     #[error("torrent with 0 length is useless")]
     BadTorrentZeroLength,
+    #[error("torrent with a piece length of 0")]
+    BadTorrentZeroPieceLength,
+    #[error("torrent has more pieces or chunks than can be counted")]
+    BadTorrentTooLarge,
     #[error("invalid piece index {0}")]
     InvalidPieceIndex(u32),
     #[error("no files in torrent")]
