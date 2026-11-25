@@ -96,6 +96,9 @@ async fn create_torrent_raw<'a>(
     let piece_length = options
         .piece_length
         .unwrap_or_else(|| choose_piece_length(&input_files));
+    if piece_length == 0 {
+        anyhow::bail!("piece length must not be 0");
+    }
 
     // Calculate hashes etc.
     const READ_SIZE: u32 = 8192; // todo: twea
@@ -154,7 +157,9 @@ async fn create_torrent_raw<'a>(
         }
     }
 
-    if remaining_piece_length > 0 && length > 0 {
+    // The last piece, when the files don't end on a piece's end: one hash per piece, never
+    // one for an empty piece after the last.
+    if remaining_piece_length < piece_length {
         piece_hashes.extend_from_slice(&piece_checksum.finish());
     }
     Ok(CreateTorrentRawResult {
@@ -245,7 +250,63 @@ pub async fn create_torrent<'a>(
 mod tests {
     use librqbit_core::torrent_metainfo::torrent_from_bytes;
 
-    use crate::{create_torrent, spawn_utils::BlockingSpawner};
+    use crate::{CreateTorrentOptions, create_torrent, spawn_utils::BlockingSpawner};
+
+    /// How many hashes a torrent made of `files` (name, size) in pieces of `piece` has.
+    async fn hashes(files: &[(&str, usize)], piece: u32) -> usize {
+        let dir = tempfile::tempdir().unwrap();
+        let path = if let [(name, size)] = files {
+            let p = dir.path().join(name);
+            std::fs::write(&p, vec![7u8; *size]).unwrap();
+            p
+        } else {
+            let d = dir.path().join("set");
+            std::fs::create_dir(&d).unwrap();
+            for (name, size) in files {
+                std::fs::write(d.join(name), vec![7u8; *size]).unwrap();
+            }
+            d
+        };
+        let opts = CreateTorrentOptions {
+            piece_length: Some(piece),
+            ..Default::default()
+        };
+        let made = create_torrent(&path, opts, &BlockingSpawner::new(1))
+            .await
+            .unwrap();
+        let pieces = made.as_info().info.data.pieces.as_ref().len();
+        assert_eq!(pieces % 20, 0);
+        pieces / 20
+    }
+
+    #[tokio::test]
+    async fn one_hash_per_piece() {
+        let p = 16384;
+        let pu = p as usize;
+        assert_eq!(hashes(&[("a.bin", 1)], p).await, 1);
+        assert_eq!(hashes(&[("a.bin", pu)], p).await, 1);
+        assert_eq!(hashes(&[("a.bin", 2 * pu)], p).await, 2);
+        assert_eq!(hashes(&[("a.bin", 2 * pu + 1)], p).await, 3);
+        // Files that end on a piece's end together, and a last file that is empty.
+        assert_eq!(hashes(&[("a.bin", pu - 5), ("b.bin", 5)], p).await, 1);
+        assert_eq!(hashes(&[("a.bin", pu + 1), ("b.bin", 0)], p).await, 2);
+    }
+
+    #[tokio::test]
+    async fn a_piece_length_of_0_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.bin");
+        std::fs::write(&p, b"abc").unwrap();
+        let opts = CreateTorrentOptions {
+            piece_length: Some(0),
+            ..Default::default()
+        };
+        assert!(
+            create_torrent(&p, opts, &BlockingSpawner::new(1))
+                .await
+                .is_err()
+        );
+    }
 
     #[tokio::test]
     async fn test_create_torrent() {
