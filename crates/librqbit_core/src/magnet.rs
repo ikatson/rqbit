@@ -59,6 +59,9 @@ impl Magnet {
         })
     }
 
+    /// The most file indices a magnet link's `so=` selects; the rest are left out.
+    pub const MAX_SELECT_ONLY: usize = 1 << 20;
+
     /// Parse a magnet link.
     pub fn parse(url: &str) -> anyhow::Result<Magnet> {
         if url.len() == 40
@@ -101,19 +104,21 @@ impl Magnet {
                 "dn" if !value.is_empty() => name = Some(value.into_owned()),
                 "dn" => {}
                 "so" => {
-                    // Process 'so' values, but silently ignore any which fail parsing
+                    // Process 'so' values, but silently ignore any which fail parsing. At most
+                    // MAX_SELECT_ONLY indices in all: a range is cut at that count.
                     for file_desc in value.split(',') {
                         if file_desc.is_empty() {
                             continue;
                         }
+                        let room = Self::MAX_SELECT_ONLY.saturating_sub(files.len());
                         // Handling ranges of file indices
                         if let Some((start, end)) = file_desc.split_once('-') {
                             let maybe_start_idx: Result<usize, _> = start.parse();
                             let maybe_end_idx: Result<usize, _> = end.parse();
                             if let (Ok(start_idx), Ok(end_idx)) = (maybe_start_idx, maybe_end_idx) {
-                                files.extend(start_idx..=end_idx);
+                                files.extend((start_idx..=end_idx).take(room));
                             }
-                        } else {
+                        } else if room > 0 {
                             // Handling single file index
                             let idx = file_desc.parse();
                             if let Ok(idx) = idx {
@@ -209,6 +214,26 @@ mod tests {
                 .unwrap();
         let m = Magnet::parse(magnet).unwrap();
         assert!(m.as_id32() == Some(info_hash));
+    }
+
+    #[test]
+    fn so_ranges_are_cut_at_the_most_indices_a_link_selects() {
+        let link = |so: &str| {
+            Magnet::parse(&format!(
+                "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5&so={so}"
+            ))
+            .unwrap()
+            .get_select_only()
+            .unwrap()
+        };
+        assert_eq!(link("0-2,5"), [0, 1, 2, 5]);
+        let huge = link(&format!("3,0-{},7", usize::MAX));
+        assert_eq!(huge.len(), Magnet::MAX_SELECT_ONLY);
+        assert_eq!(&huge[..3], [3, 0, 1]);
+        // The range is cut, and the 7 after it left out.
+        assert_eq!(huge.last(), Some(&(Magnet::MAX_SELECT_ONLY - 2)));
+        let many = link(&format!("0-{},1-{}", u32::MAX, u32::MAX));
+        assert_eq!(many.len(), Magnet::MAX_SELECT_ONLY);
     }
 
     #[test]

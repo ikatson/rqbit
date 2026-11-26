@@ -22,8 +22,12 @@ pub struct CreateTorrentOptions<'a> {
 }
 
 fn walk_dir_find_paths(dir: &Path, out: &mut Vec<Cow<'_, Path>>) -> anyhow::Result<()> {
+    // Each folder's entries by name: a folder's own order is its file system's (hashed on ext4,
+    // newest first on tmpfs, case-insensitive on NTFS), and the same files must make the same
+    // torrent on every one of them.
     out.extend(
         walkdir::WalkDir::new(dir)
+            .sort_by_file_name()
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
@@ -96,6 +100,9 @@ async fn create_torrent_raw<'a>(
     let piece_length = options
         .piece_length
         .unwrap_or_else(|| choose_piece_length(&input_files));
+    if piece_length == 0 {
+        anyhow::bail!("piece length must not be 0");
+    }
 
     // Calculate hashes etc.
     const READ_SIZE: u32 = 8192; // todo: twea
@@ -154,7 +161,9 @@ async fn create_torrent_raw<'a>(
         }
     }
 
-    if remaining_piece_length > 0 && length > 0 {
+    // The last piece, when the files don't end on a piece's end: one hash per piece, never
+    // one for an empty piece after the last.
+    if remaining_piece_length < piece_length {
         piece_hashes.extend_from_slice(&piece_checksum.finish());
     }
     Ok(CreateTorrentRawResult {
@@ -245,7 +254,128 @@ pub async fn create_torrent<'a>(
 mod tests {
     use librqbit_core::torrent_metainfo::torrent_from_bytes;
 
-    use crate::{create_torrent, spawn_utils::BlockingSpawner};
+    use crate::{CreateTorrentOptions, create_torrent, spawn_utils::BlockingSpawner};
+
+    /// How many hashes a torrent made of `files` (name, size) in pieces of `piece` has.
+    async fn hashes(files: &[(&str, usize)], piece: u32) -> usize {
+        let dir = tempfile::tempdir().unwrap();
+        let path = if let [(name, size)] = files {
+            let p = dir.path().join(name);
+            std::fs::write(&p, vec![7u8; *size]).unwrap();
+            p
+        } else {
+            let d = dir.path().join("set");
+            std::fs::create_dir(&d).unwrap();
+            for (name, size) in files {
+                std::fs::write(d.join(name), vec![7u8; *size]).unwrap();
+            }
+            d
+        };
+        let opts = CreateTorrentOptions {
+            piece_length: Some(piece),
+            ..Default::default()
+        };
+        let made = create_torrent(&path, opts, &BlockingSpawner::new(1))
+            .await
+            .unwrap();
+        let pieces = made.as_info().info.data.pieces.as_ref().len();
+        assert_eq!(pieces % 20, 0);
+        pieces / 20
+    }
+
+    #[tokio::test]
+    async fn one_hash_per_piece() {
+        let p = 16384;
+        let pu = p as usize;
+        assert_eq!(hashes(&[("a.bin", 1)], p).await, 1);
+        assert_eq!(hashes(&[("a.bin", pu)], p).await, 1);
+        assert_eq!(hashes(&[("a.bin", 2 * pu)], p).await, 2);
+        assert_eq!(hashes(&[("a.bin", 2 * pu + 1)], p).await, 3);
+        // Files that end on a piece's end together, and a last file that is empty.
+        assert_eq!(hashes(&[("a.bin", pu - 5), ("b.bin", 5)], p).await, 1);
+        assert_eq!(hashes(&[("a.bin", pu + 1), ("b.bin", 0)], p).await, 2);
+    }
+
+    #[tokio::test]
+    async fn a_folders_files_are_listed_by_name() {
+        // Made newest first, and a capital that sorts before small letters: neither the order
+        // they were made in nor a case-insensitive one (NTFS's) is the torrent's.
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().join("set");
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        let names: Vec<String> = (0..12).rev().map(|i| format!("f{i:02}.bin")).collect();
+        for (i, name) in names.iter().enumerate() {
+            std::fs::write(d.join(name), vec![b'f'; 100 + i]).unwrap();
+        }
+        std::fs::write(d.join("sub").join("x.bin"), b"x").unwrap();
+        std::fs::write(d.join("sub.bin"), b"s").unwrap();
+        std::fs::write(d.join("a.bin"), b"a").unwrap();
+        std::fs::write(d.join("Z.bin"), b"z").unwrap();
+        let opts = CreateTorrentOptions {
+            piece_length: Some(16384),
+            ..Default::default()
+        };
+        let made = create_torrent(&d, opts, &BlockingSpawner::new(1))
+            .await
+            .unwrap();
+        let listed: Vec<String> = made
+            .as_info()
+            .info
+            .data
+            .files
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                let parts: Vec<_> = f
+                    .path
+                    .iter()
+                    .map(|p| std::str::from_utf8(p.as_ref()).unwrap())
+                    .collect();
+                parts.join("/")
+            })
+            .collect();
+        let mut want = vec!["Z.bin".to_owned(), "a.bin".to_owned()];
+        want.extend((0..12).map(|i| format!("f{i:02}.bin")));
+        want.extend(["sub/x.bin".to_owned(), "sub.bin".to_owned()]);
+        assert_eq!(listed, want);
+
+        // The same files, made in another order in another folder: the same torrent.
+        let other = tempfile::tempdir().unwrap();
+        let e = other.path().join("set");
+        std::fs::create_dir_all(e.join("sub")).unwrap();
+        std::fs::write(e.join("Z.bin"), b"z").unwrap();
+        std::fs::write(e.join("a.bin"), b"a").unwrap();
+        std::fs::write(e.join("sub.bin"), b"s").unwrap();
+        for (i, name) in names.iter().enumerate().rev() {
+            std::fs::write(e.join(name), vec![b'f'; 100 + i]).unwrap();
+        }
+        std::fs::write(e.join("sub").join("x.bin"), b"x").unwrap();
+        let opts = CreateTorrentOptions {
+            piece_length: Some(16384),
+            ..Default::default()
+        };
+        let again = create_torrent(&e, opts, &BlockingSpawner::new(1))
+            .await
+            .unwrap();
+        assert_eq!(made.info_hash(), again.info_hash());
+    }
+
+    #[tokio::test]
+    async fn a_piece_length_of_0_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.bin");
+        std::fs::write(&p, b"abc").unwrap();
+        let opts = CreateTorrentOptions {
+            piece_length: Some(0),
+            ..Default::default()
+        };
+        assert!(
+            create_torrent(&p, opts, &BlockingSpawner::new(1))
+                .await
+                .is_err()
+        );
+    }
 
     #[tokio::test]
     async fn test_create_torrent() {

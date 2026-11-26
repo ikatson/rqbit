@@ -70,7 +70,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
-use tracker_comms::{TrackerComms, UdpTrackerClient};
+use tracker_comms::{TrackerComms, UdpTrackerAddrFilter, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
@@ -486,6 +486,11 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+
+    /// Asked about every address a UDP tracker is to be sent to: each address its name
+    /// resolves to (only the allowed ones are used), or the address the tracker's URL gives.
+    /// One it refuses is sent nothing. HTTP trackers are not asked. None: every address.
+    pub udp_tracker_filter: Option<UdpTrackerAddrFilter>,
 }
 
 impl Default for SessionOptions {
@@ -514,6 +519,7 @@ impl Default for SessionOptions {
             disable_local_service_discovery: false,
             ipv4_only: false,
             client_name_and_version: None,
+            udp_tracker_filter: None,
         }
     }
 }
@@ -765,9 +771,13 @@ impl Session {
                 None
             };
 
-            let udp_tracker_client = UdpTrackerClient::new(token.clone(), bind_device.as_ref())
-                .await
-                .context("error creating UDP tracker client")?;
+            let udp_tracker_client = UdpTrackerClient::new_with_filter(
+                token.clone(),
+                bind_device.as_ref(),
+                opts.udp_tracker_filter,
+            )
+            .await
+            .context("error creating UDP tracker client")?;
 
             let lsd = {
                 if opts.disable_local_service_discovery {
@@ -1652,6 +1662,11 @@ impl Session {
         self.announce_port
     }
 
+    /// Whether the blocklist and the allowlist let `ip` be connected to.
+    pub(crate) fn ip_permitted(&self, ip: std::net::IpAddr) -> bool {
+        ip_permitted(&self.blocklist, self.allowlist.as_ref(), ip)
+    }
+
     async fn resolve_magnet(
         self: &Arc<Self>,
         info_hash: Id20,
@@ -1659,6 +1674,21 @@ impl Session {
         trackers: &[url::Url],
         peer_opts: Option<PeerConnectionOptions>,
     ) -> anyhow::Result<ResolveMagnetResult> {
+        // The peers asked for the metadata are held to the blocklist and allowlist, as the
+        // torrent's own connections are.
+        let session = Arc::downgrade(self);
+        let peer_rx = permitted_peers(peer_rx, move |ip| {
+            session.upgrade().is_some_and(|s| {
+                let permitted = s.ip_permitted(ip);
+                if !permitted {
+                    s.stats
+                        .counters
+                        .blocked_outgoing
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                permitted
+            })
+        });
         match read_metainfo_from_peer_receiver(
             self.peer_id,
             info_hash,
@@ -1824,6 +1854,20 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
     }
 }
 
+/// Whether `blocklist` and `allowlist` (None: any address) let `ip` be connected to.
+fn ip_permitted(blocklist: &IpRanges, allowlist: Option<&IpRanges>, ip: std::net::IpAddr) -> bool {
+    !blocklist.has(ip) && allowlist.is_none_or(|l| l.has(ip))
+}
+
+/// The peers of `rx` whose address `permitted` lets through.
+fn permitted_peers(
+    rx: PeerStream,
+    permitted: impl Fn(std::net::IpAddr) -> bool + Send + 'static,
+) -> PeerStream {
+    rx.filter(move |addr| std::future::ready(permitted(addr.ip())))
+        .boxed()
+}
+
 #[cfg(test)]
 mod tests {
     use buffers::ByteBuf;
@@ -1831,6 +1875,38 @@ mod tests {
     use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes};
 
     use super::{is_bare_info_hash, torrent_file_from_info_bytes};
+
+    #[tokio::test]
+    async fn a_magnets_lookup_asks_only_the_peers_the_lists_permit() {
+        use futures::StreamExt;
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+        use crate::ip_ranges::IpRanges;
+
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let v4 = |a: &str, b: &str| a.parse::<Ipv4Addr>().unwrap()..b.parse::<Ipv4Addr>().unwrap();
+        let blocklist = IpRanges::new([v4("203.0.113.0", "203.0.113.255")], []);
+        let allowlist = IpRanges::new([v4("198.51.100.0", "203.0.113.255")], []);
+        assert!(super::ip_permitted(&blocklist, None, ip("198.51.100.4")));
+        assert!(!super::ip_permitted(&blocklist, None, ip("203.0.113.7")));
+        assert!(!super::ip_permitted(
+            &IpRanges::default(),
+            Some(&allowlist),
+            ip("192.0.2.1")
+        ));
+
+        let peers: Vec<SocketAddr> = ["198.51.100.4:6881", "203.0.113.7:6881", "192.0.2.1:6881"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        let asked: Vec<SocketAddr> =
+            super::permitted_peers(futures::stream::iter(peers.clone()).boxed(), move |ip| {
+                super::ip_permitted(&blocklist, None, ip)
+            })
+            .collect()
+            .await;
+        assert_eq!(asked, [peers[0], peers[2]]);
+    }
 
     #[test]
     fn test_is_bare_info_hash() {

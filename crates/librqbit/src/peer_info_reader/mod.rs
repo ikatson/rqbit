@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
+use anyhow::Context;
 use bencode::from_bytes;
 use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
@@ -188,7 +189,7 @@ impl PeerConnectionHandler for Handler {
                 .locked
                 .write()
                 .as_mut()
-                .unwrap()
+                .context("metadata piece before the extended handshake")?
                 .record_piece(&utdata, &self.info_hash)?;
             if piece_ready {
                 let buf = Bytes::from(self.locked.write().take().unwrap().buffer);
@@ -226,7 +227,12 @@ impl PeerConnectionHandler for Handler {
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()> {
+        // The pieces were asked for after the first one; another changes nothing.
+        if self.locked.read().is_some() {
+            return Ok(());
+        }
         let metadata_size = match extended_handshake.metadata_size {
+            Some(0) => anyhow::bail!("peer gave a metadata_size of 0"),
             Some(metadata_size) => metadata_size,
             None => anyhow::bail!("peer does not have metadata_size"),
         };
@@ -260,5 +266,86 @@ impl PeerConnectionHandler for Handler {
 
     fn client_name_and_version(&self) -> &str {
         &self.client_name_and_version
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buffers::ByteBuf;
+    use librqbit_core::hash_id::Id20;
+    use parking_lot::{Mutex, RwLock};
+    use peer_binary_protocol::{
+        Message,
+        extended::{
+            ExtendedMessage, PeerExtendedMessageIds,
+            handshake::ExtendedHandshake,
+            ut_metadata::{UtMetadata, UtMetadataData},
+        },
+    };
+
+    use super::Handler;
+    use crate::peer_connection::{PeerConnectionHandler, WriterRequest};
+
+    fn handler() -> (Handler, tokio::sync::mpsc::UnboundedReceiver<WriterRequest>) {
+        let (writer_tx, writer_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (result_tx, _result_rx) = tokio::sync::oneshot::channel();
+        let handler = Handler {
+            addr: "198.51.100.4:6881".parse().unwrap(),
+            info_hash: Id20::new([7; 20]),
+            writer_tx,
+            result_tx: Mutex::new(Some(result_tx)),
+            locked: RwLock::new(None),
+            client_name_and_version: "test".to_owned(),
+        };
+        (handler, writer_rx)
+    }
+
+    fn data(piece: u32) -> Message<'static> {
+        Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data(
+            UtMetadataData::from_bytes(piece, 100, ByteBuf(&[0u8; 100])),
+        )))
+    }
+
+    fn extended_handshake(size: u32) -> ExtendedHandshake<ByteBuf<'static>> {
+        ExtendedHandshake {
+            metadata_size: Some(size),
+            m: PeerExtendedMessageIds {
+                ut_metadata: Some(3),
+                ut_pex: None,
+            },
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_metadata_piece_before_the_extended_handshake_is_an_error() {
+        let (h, _rx) = handler();
+        let err = h.on_received_message(data(0)).await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("before the extended handshake"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn a_second_extended_handshake_asks_for_nothing_more() {
+        let (h, mut rx) = handler();
+        h.on_extended_handshake(&extended_handshake(100)).unwrap();
+        let mut sent = 0;
+        while rx.try_recv().is_ok() {
+            sent += 1;
+        }
+        // Unchoke, Interested, and the one piece.
+        assert_eq!(sent, 3);
+        h.on_extended_handshake(&extended_handshake(20_000_000))
+            .unwrap();
+        assert!(rx.try_recv().is_err());
+        assert_eq!(h.locked.read().as_ref().unwrap().metadata_size, 100);
+    }
+
+    #[test]
+    fn a_metadata_size_of_0_is_an_error() {
+        let (h, _rx) = handler();
+        assert!(h.on_extended_handshake(&extended_handshake(0)).is_err());
     }
 }

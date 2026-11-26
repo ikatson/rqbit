@@ -76,22 +76,35 @@ impl Lengths {
     ) -> crate::Result<Lengths> {
         let total_length = torrent
             .iter_file_details_raw(encoding_rs::UTF_8)?
-            .map(|d| d.len)
-            .sum();
+            .try_fold(0u64, |sum, d| sum.checked_add(d.len))
+            .ok_or(Error::BadTorrentTooLarge)?;
         Lengths::new(total_length, torrent.piece_length)
     }
 
+    /// Lengths of a torrent of `total_length` bytes in pieces of `piece_length`. A piece length
+    /// of 0 is an error, and so are more pieces or chunks than a `u32` counts.
     pub fn new(total_length: u64, piece_length: u32) -> crate::Result<Self> {
         if total_length == 0 {
             return Err(Error::BadTorrentZeroLength);
         }
-        let total_pieces = total_length.div_ceil(piece_length as u64) as u32;
+        if piece_length == 0 {
+            return Err(Error::BadTorrentZeroPieceLength);
+        }
+        let total_pieces = total_length.div_ceil(piece_length as u64);
+        let chunks_per_piece = (piece_length as u64).div_ceil(CHUNK_SIZE as u64);
+        let last_piece_length = last_element_size(total_length, piece_length as u64);
+        let total_chunks =
+            (total_pieces - 1) * chunks_per_piece + last_piece_length.div_ceil(CHUNK_SIZE as u64);
+        if total_pieces > u32::MAX as u64 || total_chunks > u32::MAX as u64 {
+            return Err(Error::BadTorrentTooLarge);
+        }
+        let total_pieces = total_pieces as u32;
         Ok(Self {
             piece_length,
             total_length,
-            chunks_per_piece: (piece_length as u64).div_ceil(CHUNK_SIZE as u64) as u32,
+            chunks_per_piece: chunks_per_piece as u32,
             last_piece_id: total_pieces - 1,
-            last_piece_length: last_element_size(total_length, piece_length as u64) as u32,
+            last_piece_length: last_piece_length as u32,
         })
     }
 
@@ -303,6 +316,38 @@ mod tests {
 
     fn make_lengths() -> Lengths {
         Lengths::new(1174243328, 262144).unwrap()
+    }
+
+    #[test]
+    fn a_piece_length_of_0_is_an_error() {
+        assert!(matches!(
+            Lengths::new(1, 0),
+            Err(Error::BadTorrentZeroPieceLength)
+        ));
+    }
+
+    #[test]
+    fn more_pieces_or_chunks_than_a_u32_counts_is_an_error() {
+        // Pieces: one byte each.
+        let pieces = u32::MAX as u64;
+        assert_eq!(Lengths::new(pieces, 1).unwrap().total_pieces(), u32::MAX);
+        assert!(matches!(
+            Lengths::new(pieces + 1, 1),
+            Err(Error::BadTorrentTooLarge)
+        ));
+        // Chunks: 2 per piece; the last chunk is the one past u32::MAX.
+        let piece = CHUNK_SIZE * 2;
+        let fits = (u32::MAX as u64 / 2) * piece as u64 + CHUNK_SIZE as u64;
+        assert_eq!(Lengths::new(fits, piece).unwrap().total_chunks(), u32::MAX);
+        assert!(matches!(
+            Lengths::new(fits + 1, piece),
+            Err(Error::BadTorrentTooLarge)
+        ));
+        // The largest piece length, many pieces.
+        assert!(matches!(
+            Lengths::new(u64::MAX, u32::MAX),
+            Err(Error::BadTorrentTooLarge)
+        ));
     }
 
     #[test]

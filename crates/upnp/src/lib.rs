@@ -20,6 +20,47 @@ const SSDP_MULTICAST_IP: SocketAddr =
 pub const SSDP_SEARCH_WAN_IPCONNECTION_ST: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
 pub const SSDP_SEARCH_ROOT_ST: &str = "upnp:rootdevice";
 
+/// The most of a device's answer (its description, a port mapping's reply) that is read. A
+/// router's description is a few KB.
+const MAX_RESPONSE_BYTES: usize = 1 << 20;
+
+/// A response's body as text, at most [`MAX_RESPONSE_BYTES`] of it (more is an error).
+async fn read_text_capped(mut response: reqwest::Response) -> anyhow::Result<String> {
+    if response
+        .content_length()
+        .is_some_and(|len| len > MAX_RESPONSE_BYTES as u64)
+    {
+        bail!("response larger than {MAX_RESPONSE_BYTES} bytes");
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            bail!("response larger than {MAX_RESPONSE_BYTES} bytes");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    String::from_utf8(body).context("response is not UTF-8")
+}
+
+/// Whether `url` is on the device that sent the SSDP answer: plain HTTP to the address the
+/// answer came from (an IPv4 address mapped into IPv6 counts as itself). A device describes
+/// itself and takes port mappings at its own address.
+fn on_device(url: &Url, device: IpAddr) -> bool {
+    let canonical = |ip: IpAddr| match ip {
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(v6)),
+        v4 => v4,
+    };
+    let host = match url.host() {
+        Some(url::Host::Ipv4(a)) => IpAddr::V4(a),
+        Some(url::Host::Ipv6(a)) => IpAddr::V6(a),
+        _ => return false,
+    };
+    url.scheme() == "http" && canonical(host) == canonical(device)
+}
+
 pub fn make_ssdp_search_request(kind: &str) -> String {
     format!(
         "M-SEARCH * HTTP/1.1\r\n\
@@ -121,8 +162,7 @@ async fn forward_port(
 
     let status = response.status();
 
-    let response_text = response
-        .text()
+    let response_text = read_text_capped(response)
         .await
         .context("error reading response text")?;
 
@@ -244,12 +284,25 @@ impl UpnpEndpoint {
         Ok(local_ip)
     }
 
+    /// The WAN IP services' control URLs: only those on the device itself (its address and
+    /// port, as its description's).
     fn get_wan_ip_control_urls(&self) -> impl Iterator<Item = (tracing::Span, Url)> + '_ {
+        let location = &self.discover_response.location;
         self.iter_services()
             .filter(|(_, s)| s.service_type == SERVICE_TYPE_WAN_IP_CONNECTION)
-            .map(|(span, s)| (span, self.discover_response.location.join(&s.control_url)))
-            .filter_map(|(span, url)| match url {
-                Ok(url) => Some((span, url)),
+            .map(|(span, s)| (span, location.join(&s.control_url)))
+            .filter_map(move |(span, url)| match url {
+                Ok(url)
+                    if url.host() == location.host()
+                        && url.port_or_known_default() == location.port_or_known_default()
+                        && on_device(&url, self.discover_response.received_from.ip()) =>
+                {
+                    Some((span, url))
+                }
+                Ok(url) => {
+                    debug!(%url, "control url not on the device, ignored");
+                    None
+                }
                 Err(e) => {
                     debug!("bad control url: {e:#}");
                     None
@@ -269,8 +322,8 @@ pub async fn discover_services(location: Url) -> anyhow::Result<RootDesc> {
         .get(location.clone())
         .send()
         .await
-        .context("failed to send GET request")?
-        .text()
+        .context("failed to send GET request")?;
+    let response = read_text_capped(response)
         .await
         .context("failed to read response body")?;
     trace!("received from {location}: {response}");
@@ -309,6 +362,9 @@ pub fn parse_upnp_discover_response(
     let location = location.context("missing location header")?;
     let location =
         Url::parse(location).with_context(|| format!("failed parsing location {location}"))?;
+    if !on_device(&location, received_from.ip()) {
+        bail!("location {location} is not on the device that answered ({received_from})");
+    }
     Ok(UpnpDiscoverResponse {
         location,
         received_from,
@@ -527,6 +583,73 @@ mod tests {
     use quick_xml::de::from_str;
 
     use crate::{Device, DeviceList, RootDesc, Service, ServiceList};
+
+    fn ssdp_answer(location: &str) -> Vec<u8> {
+        format!("HTTP/1.1 200 OK\r\nST: upnp:rootdevice\r\nLOCATION: {location}\r\n\r\n")
+            .into_bytes()
+    }
+
+    #[test]
+    fn a_location_must_be_on_the_device_that_answered() {
+        let from = "192.168.1.1:1900".parse().unwrap();
+        let parse = |l: &str| crate::parse_upnp_discover_response(&ssdp_answer(l), from);
+        assert!(parse("http://192.168.1.1:5000/rootDesc.xml").is_ok());
+        assert!(parse("http://192.168.1.1/desc.xml").is_ok());
+        for elsewhere in [
+            "http://192.168.1.2:5000/rootDesc.xml",
+            "http://127.0.0.1:8080/admin",
+            "http://router.example/rootDesc.xml",
+            "https://192.168.1.1/rootDesc.xml",
+            "file:///etc/passwd",
+        ] {
+            assert!(parse(elsewhere).is_err(), "{elsewhere}");
+        }
+        // An answer that came over IPv6 as a mapped IPv4 address.
+        let mapped = "[::ffff:192.168.1.1]:1900".parse().unwrap();
+        assert!(
+            crate::parse_upnp_discover_response(
+                &ssdp_answer("http://192.168.1.1:5000/rootDesc.xml"),
+                mapped
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn control_urls_off_the_device_are_ignored() {
+        let desc: RootDesc = from_str(include_str!("resources/test/devices-0.xml")).unwrap();
+        let urls = |control_url: &str| {
+            let mut desc = desc.clone();
+            desc.devices[0].device_list.devices[0].device_list.devices[0]
+                .service_list
+                .services[0]
+                .control_url = control_url.into();
+            let endpoint = crate::UpnpEndpoint {
+                discover_response: crate::UpnpDiscoverResponse {
+                    received_from: "192.168.1.1:1900".parse().unwrap(),
+                    location: "http://192.168.1.1:5000/rootDesc.xml".parse().unwrap(),
+                },
+                data: desc,
+                nics: Vec::new(),
+            };
+            endpoint
+                .get_wan_ip_control_urls()
+                .map(|(_, u)| u.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            urls("/upnp/control/WANIPConnection0"),
+            ["http://192.168.1.1:5000/upnp/control/WANIPConnection0"]
+        );
+        for elsewhere in [
+            "http://127.0.0.1:8080/admin",
+            "http://192.168.1.1:80/x",
+            "//192.168.1.2:5000/x",
+            "http://192.168.1.2:5000/x",
+        ] {
+            assert!(urls(elsewhere).is_empty(), "{elsewhere}");
+        }
+    }
 
     #[test]
     fn test_parse_root_desc() {

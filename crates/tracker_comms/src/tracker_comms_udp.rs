@@ -245,7 +245,12 @@ struct ClientLocked {
 struct ClientShared {
     sock: UdpSocket,
     locked: RwLock<ClientLocked>,
+    filter: Option<UdpTrackerAddrFilter>,
 }
+
+/// Whether a UDP tracker's address (as its name resolved, or as written) may be sent to. See
+/// [`UdpTrackerClient::new_with_filter`].
+pub type UdpTrackerAddrFilter = Arc<dyn Fn(SocketAddr) -> bool + Send + Sync>;
 
 #[derive(Clone)]
 pub struct UdpTrackerClient {
@@ -269,6 +274,17 @@ impl UdpTrackerClient {
         cancel_token: CancellationToken,
         bind_device: Option<&BindDevice>,
     ) -> anyhow::Result<Self> {
+        Self::new_with_filter(cancel_token, bind_device, None).await
+    }
+
+    /// [`Self::new`], sending only to the tracker addresses `filter` lets through: of a name's
+    /// addresses only the allowed ones are used, and an address it refuses is never sent
+    /// anything. None: every address.
+    pub async fn new_with_filter(
+        cancel_token: CancellationToken,
+        bind_device: Option<&BindDevice>,
+        filter: Option<UdpTrackerAddrFilter>,
+    ) -> anyhow::Result<Self> {
         let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
         let sock = UdpSocket::bind_udp(
             addr,
@@ -283,6 +299,7 @@ impl UdpTrackerClient {
             state: Arc::new(ClientShared {
                 sock,
                 locked: RwLock::new(Default::default()),
+                filter,
             }),
         };
 
@@ -402,11 +419,22 @@ impl UdpTrackerClient {
         bail!("cant generate transaction id")
     }
 
+    /// Whether the client's filter lets `addr` through (see [`Self::new_with_filter`]).
+    pub fn allows(&self, addr: SocketAddr) -> bool {
+        self.state
+            .filter
+            .as_ref()
+            .is_none_or(|allowed| allowed(addr))
+    }
+
     pub async fn announce(
         &self,
         tracker: SocketAddr,
         fields: AnnounceFields,
     ) -> anyhow::Result<AnnounceResponse> {
+        if !self.allows(tracker) {
+            bail!("tracker address {tracker} refused by the filter");
+        }
         let connection_id = self.get_connection_id(tracker).await?;
         let request = Request::Announce(connection_id, fields);
         let response = self.request(tracker, request).await?;
@@ -426,6 +454,43 @@ mod tests {
     use crate::tracker_comms_udp::{
         AnnounceFields, EVENT_NONE, Request, Response, new_transaction_id,
     };
+
+    #[tokio::test]
+    async fn an_address_the_filter_refuses_is_sent_nothing() {
+        use std::{net::SocketAddr, sync::Arc};
+
+        let tracker = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        tracker.set_nonblocking(true).unwrap();
+        let addr = tracker.local_addr().unwrap();
+        let refuse_loopback: super::UdpTrackerAddrFilter =
+            Arc::new(|a: SocketAddr| !a.ip().is_loopback());
+        let client = super::UdpTrackerClient::new_with_filter(
+            Default::default(),
+            None,
+            Some(refuse_loopback),
+        )
+        .await
+        .unwrap();
+        assert!(!client.allows(addr));
+        assert!(client.allows("203.0.113.7:6969".parse().unwrap()));
+        let fields = AnnounceFields {
+            info_hash: Id20::new([1; 20]),
+            peer_id: generate_peer_id(b"-xx1234-"),
+            downloaded: 0,
+            left: 0,
+            uploaded: 0,
+            event: EVENT_NONE,
+            key: 0,
+            port: 6881,
+        };
+        let err = client.announce(addr, fields).await.unwrap_err();
+        assert!(format!("{err:#}").contains("refused"), "{err:#}");
+        let mut buf = [0u8; 64];
+        assert_eq!(
+            tracker.recv_from(&mut buf).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
 
     #[test]
     fn test_parse_announce() {
