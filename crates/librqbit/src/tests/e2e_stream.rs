@@ -13,7 +13,9 @@ use crate::{
 
 use super::test_util::create_default_random_dir_with_torrents;
 
-async fn e2e_stream() -> anyhow::Result<()> {
+/// `idle_streams`: streams opened on the client before anything has been
+/// downloaded, and kept open while the test stream reads the file.
+async fn e2e_stream(listen_port: u16, idle_streams: usize) -> anyhow::Result<()> {
     setup_test_logging();
     let files = create_default_random_dir_with_torrents(1, 8192, Some("test_e2e_stream"));
     let torrent = create_torrent(
@@ -35,7 +37,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
             peer_id: Some(TestPeerMetadata::good().as_peer_id()),
             persistence: None,
             listen: Some(crate::listen::ListenerOptions {
-                listen_addr: (Ipv4Addr::LOCALHOST, 16001).into(),
+                listen_addr: (Ipv4Addr::LOCALHOST, listen_port).into(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -91,7 +93,8 @@ async fn e2e_stream() -> anyhow::Result<()> {
         .add_torrent(
             AddTorrent::from_bytes(torrent.as_bytes()?),
             Some(crate::AddTorrentOptions {
-                paused: false,
+                // Paused, so the idle streams open before any piece arrives.
+                paused: idle_streams > 0,
                 initial_peers: Some(vec![peer]),
                 ..Default::default()
             }),
@@ -101,6 +104,14 @@ async fn e2e_stream() -> anyhow::Result<()> {
         .unwrap();
 
     client_handle.wait_until_initialized().await?;
+
+    let mut idle = Vec::with_capacity(idle_streams);
+    for _ in 0..idle_streams {
+        idle.push(client_handle.clone().stream(0).await?);
+    }
+    if idle_streams > 0 {
+        client_session.unpause(&client_handle).await?;
+    }
 
     info!("client torrent initialized, starting stream");
 
@@ -117,5 +128,12 @@ async fn e2e_stream() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_e2e_stream() -> anyhow::Result<()> {
-    timeout(Duration::from_secs(10), e2e_stream()).await?
+    timeout(Duration::from_secs(10), e2e_stream(16001, 0)).await?
+}
+
+// As many open streams as the session has blocking permits (8 by default).
+// Received pieces must still get written, or every stream waits forever.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_stream_as_many_streams_as_blocking_permits() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(10), e2e_stream(16002, 7)).await?
 }
