@@ -1911,14 +1911,18 @@ impl PeerHandler {
                     let piece_len = state.lengths.piece_length(chunk_info.piece_index) as u64;
                     {
                         let mut g = state.lock_write("mark_piece_downloaded");
-                        g.get_pieces_mut()?
+                        let newly_have = g
+                            .get_pieces_mut()?
                             .mark_piece_hash_ok(chunk_info.piece_index, &state.metadata.file_infos);
                         // Under the same lock as the have-bit, so the two are never seen
-                        // apart.
-                        state
-                            .stats
-                            .have_bytes
-                            .fetch_add(piece_len, Ordering::Relaxed);
+                        // apart. Only for a piece that became have here: a second copy of
+                        // a piece can pass its check after the first one did.
+                        if newly_have {
+                            state
+                                .stats
+                                .have_bytes
+                                .fetch_add(piece_len, Ordering::Relaxed);
+                        }
                     }
 
                     // Global piece counters.

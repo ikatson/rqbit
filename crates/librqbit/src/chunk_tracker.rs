@@ -273,9 +273,15 @@ impl ChunkTracker {
     /// count that is derived from it - the totals and the per-file bytes - in the same
     /// call, so that nothing holding the lock between two calls can see a piece that is
     /// have but not counted, or counted but not have.
-    pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex, file_infos: &FileInfos) {
+    ///
+    /// Returns whether the piece became have in this call. It is false for a piece we
+    /// already had - a second copy of it can pass its check after the first one - and
+    /// a caller keeping its own count must then add nothing.
+    #[must_use]
+    pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex, file_infos: &FileInfos) -> bool {
         let id = idx.get() as usize;
-        if !self.have.as_slice()[id] {
+        let newly_have = !self.have.as_slice()[id];
+        if newly_have {
             self.have.as_slice_mut().set(id, true);
             let len = self.lengths.piece_length(idx) as u64;
             self.hns.have_bytes += len;
@@ -295,6 +301,7 @@ impl ChunkTracker {
                         .size_of_piece_in_file(idx.get(), fi.offset_in_torrent, fi.len);
             }
         }
+        newly_have
     }
 
     pub fn is_chunk_ready_to_upload(&self, chunk: &ChunkInfo) -> bool {
@@ -567,19 +574,22 @@ mod tests {
         assert_eq!(ct.per_file_have_bytes(), [0, 0, 0, 0]);
 
         // Piece 1 is shared by three files, one of them empty.
-        ct.mark_piece_downloaded(l.validate_piece_index(1).unwrap(), &files);
+        assert!(ct.mark_piece_downloaded(l.validate_piece_index(1).unwrap(), &files));
         assert_eq!(
             ct.per_file_have_bytes(),
             [0, 1, 0, piece_len as u64 - 1],
             "the bytes of piece 1 in every file it overlaps"
         );
+        let have_bytes = ct.get_hns().have_bytes;
 
-        // Marking a piece we already have counts nothing twice.
-        ct.mark_piece_downloaded(l.validate_piece_index(1).unwrap(), &files);
+        // Marking a piece we already have counts nothing twice, and says so, so that a
+        // caller with a count of its own adds nothing either.
+        assert!(!ct.mark_piece_downloaded(l.validate_piece_index(1).unwrap(), &files));
         assert_eq!(ct.per_file_have_bytes(), [0, 1, 0, piece_len as u64 - 1]);
+        assert_eq!(ct.get_hns().have_bytes, have_bytes);
 
-        ct.mark_piece_downloaded(l.validate_piece_index(0).unwrap(), &files);
-        ct.mark_piece_downloaded(l.validate_piece_index(2).unwrap(), &files);
+        assert!(ct.mark_piece_downloaded(l.validate_piece_index(0).unwrap(), &files));
+        assert!(ct.mark_piece_downloaded(l.validate_piece_index(2).unwrap(), &files));
         assert_eq!(
             ct.per_file_have_bytes(),
             [piece_len as u64, 1, 0, piece_len as u64],

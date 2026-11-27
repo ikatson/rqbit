@@ -229,9 +229,11 @@ impl PieceTracker {
     }
 
     /// Mark piece as downloaded after successful hash verification. Moves the per-file
-    /// counts with it: see [`ChunkTracker::mark_piece_downloaded`].
-    pub fn mark_piece_hash_ok(&mut self, piece: ValidPieceIndex, file_infos: &FileInfos) {
-        self.chunks.mark_piece_downloaded(piece, file_infos);
+    /// counts with it: see [`ChunkTracker::mark_piece_downloaded`]. Returns whether the
+    /// piece became have in this call.
+    #[must_use]
+    pub fn mark_piece_hash_ok(&mut self, piece: ValidPieceIndex, file_infos: &FileInfos) -> bool {
+        self.chunks.mark_piece_downloaded(piece, file_infos)
     }
 
     /// Mark piece as failed after hash verification failure - requeues the piece.
@@ -458,7 +460,7 @@ mod tests {
         assert!(duration.is_some());
         assert!(!tracker.is_inflight(piece));
         // Simulate successful hash check
-        tracker.mark_piece_hash_ok(piece, &file_infos);
+        assert!(tracker.mark_piece_hash_ok(piece, &file_infos));
         assert!(tracker.chunks().is_piece_have(piece));
     }
 
