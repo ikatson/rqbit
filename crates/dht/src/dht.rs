@@ -969,6 +969,22 @@ struct DhtWorker {
     dht: Arc<DhtState>,
 }
 
+// Windows fails recv_from on a UDP socket with these for a single datagram, and the socket keeps
+// working afterwards:
+// - WSAEMSGSIZE: the datagram was longer than the buffer and got truncated.
+// - WSAENETRESET: an earlier send_to got an ICMP time exceeded back.
+// - WSAECONNRESET: an earlier send_to got an ICMP port unreachable back.
+fn is_datagram_error(e: &std::io::Error) -> bool {
+    const WSAEMSGSIZE: i32 = 10040;
+    const WSAENETRESET: i32 = 10052;
+    const WSAECONNRESET: i32 = 10054;
+    cfg!(windows)
+        && matches!(
+            e.raw_os_error(),
+            Some(WSAEMSGSIZE | WSAENETRESET | WSAECONNRESET)
+        )
+}
+
 impl DhtWorker {
     fn on_send_error(&self, tid: u16, addr: SocketAddr, err: crate::Error) {
         if let Some((_, OutstandingRequest { done })) =
@@ -1183,7 +1199,14 @@ impl DhtWorker {
         let reader = async {
             let mut buf = vec![0u8; 16384];
             loop {
-                let (size, addr) = socket.recv_from(&mut buf).await.map_err(Error::Recv)?;
+                let (size, addr) = match socket.recv_from(&mut buf).await {
+                    Ok(r) => r,
+                    Err(e) if is_datagram_error(&e) => {
+                        debug!("ignoring UDP receive error: {e:#}");
+                        continue;
+                    }
+                    Err(e) => return Err(Error::Recv(e)),
+                };
                 match bprotocol::deserialize_message::<ByteBufOwned>(&buf[..size]) {
                     Ok(msg) => match output_tx.send((msg, addr)).await {
                         Ok(_) => {}
@@ -1394,5 +1417,85 @@ impl FromSocketAddr for SocketAddrV6 {
             SocketAddr::V6(a) => Some(a),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        net::{Ipv4Addr, SocketAddr},
+        time::Duration,
+    };
+
+    use bencode::ByteBufOwned;
+    use tokio::net::UdpSocket;
+
+    use super::{DhtConfig, DhtState};
+    use crate::{
+        Dht,
+        bprotocol::{self, MessageKind},
+    };
+
+    async fn start_dht(bootstrap_addr: SocketAddr) -> Dht {
+        DhtState::with_config(DhtConfig {
+            listen_addr: Some((Ipv4Addr::LOCALHOST, 0).into()),
+            bootstrap_addrs: Some(vec![bootstrap_addr.to_string()]),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn assert_answers_ping(dht: &Dht) {
+        let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        client
+            .send_to(
+                b"d1:ad2:id20:abcdefghij0123456789e1:q4:ping1:t2:aa1:y1:qe",
+                dht.listen_addr(),
+            )
+            .await
+            .unwrap();
+        let mut buf = [0u8; 1024];
+        let len = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match client.recv_from(&mut buf).await {
+                    Ok((len, addr)) if addr == dht.listen_addr() => return len,
+                    _ => continue,
+                }
+            }
+        })
+        .await
+        .expect("the DHT stopped answering");
+        let response = bprotocol::deserialize_message::<ByteBufOwned>(&buf[..len]).unwrap();
+        assert!(matches!(response.kind, MessageKind::Response(_)));
+    }
+
+    // On Windows, an ICMP port unreachable that comes back for an earlier send_to makes the next
+    // recv_from on the same UDP socket fail with WSAECONNRESET (os error 10054).
+    #[tokio::test]
+    async fn test_dht_answers_after_icmp_port_unreachable() {
+        // Nothing listens on this port once the socket is dropped.
+        let closed = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let dht = start_dht(closed).await;
+
+        // Let the bootstrap query reach the closed port and the ICMP error come back.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_answers_ping(&dht).await;
+    }
+
+    // On Windows, a datagram longer than the receive buffer makes recv_from fail with
+    // WSAEMSGSIZE (os error 10040).
+    #[tokio::test]
+    async fn test_dht_answers_after_oversized_datagram() {
+        // Stays open, so the bootstrap query gets neither an answer nor an ICMP error.
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let dht = start_dht(silent.local_addr().unwrap()).await;
+
+        // Some platforms refuse to send a datagram this large, which is fine.
+        let _ = silent.send_to(&[0u8; 20_000], dht.listen_addr()).await;
+        assert_answers_ping(&dht).await;
     }
 }

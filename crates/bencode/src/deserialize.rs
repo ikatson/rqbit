@@ -8,11 +8,26 @@ use serde::{Deserialize, Serialize, forward_to_deserialize_any};
 
 use crate::raw_value::TAG;
 
+/// The default maximum nesting depth accepted when deserializing.
+///
+/// Bencode itself (BEP 3) places no limit on nesting, so this is a
+/// receiver-side robustness limit, not a format limit. The deserializer is
+/// recursive, so without it an attacker-controlled payload of a few tens of
+/// kilobytes (e.g. a deeply nested tracker response, a malformed .torrent
+/// file, a BEP 10 extended message, or a DHT packet) overflows the stack and
+/// aborts the process. Legitimate bencode in the BitTorrent ecosystem is
+/// shallow (a .torrent peaks around depth 6; DHT and tracker messages around
+/// 3-4), so 128 leaves ~20x headroom over anything real. This matches
+/// serde_json's recursion limit; libtorrent's bdecode() defaults to 100.
+pub const DEFAULT_MAX_DEPTH: usize = 128;
+
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
     field_context: ErrorContext<'de>,
     field_context_did_not_fit: u8,
     parsing_key: bool,
+    depth: usize,
+    max_depth: usize,
 }
 
 impl<'de> BencodeDeserializer<'de> {
@@ -22,7 +37,20 @@ impl<'de> BencodeDeserializer<'de> {
             field_context: Default::default(),
             field_context_did_not_fit: 0,
             parsing_key: false,
+            depth: 0,
+            max_depth: DEFAULT_MAX_DEPTH,
         }
+    }
+
+    /// Override the maximum nesting depth (see [`DEFAULT_MAX_DEPTH`]).
+    ///
+    /// Raising this also raises the stack usage of the recursive parser:
+    /// each nesting level costs on the order of a few hundred bytes of
+    /// stack, so threads with small stacks (e.g. tokio workers default to
+    /// 2 MiB) should not set this much above the default.
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
     }
 
     pub fn into_remaining(self) -> &'de [u8] {
@@ -66,6 +94,18 @@ impl<'de> BencodeDeserializer<'de> {
             self.field_context_did_not_fit = self.field_context_did_not_fit.saturating_add(1);
         }
         Ok(b)
+    }
+
+    /// Increment the nesting depth before recursing into a container's
+    /// elements. All container types (list, dict, struct, tuple) funnel
+    /// through deserialize_seq/deserialize_map, which are the only places
+    /// the parser recurses, so guarding these two guards everything.
+    fn enter_container(&mut self) -> Result<(), Error> {
+        if self.depth >= self.max_depth {
+            return Err(Error::DepthLimit(self.max_depth));
+        }
+        self.depth += 1;
+        Ok(())
     }
 }
 
@@ -120,6 +160,8 @@ pub enum Error {
     RawDeInvalidValue,
     #[error("invalid utf-8")]
     InvalidUtf8,
+    #[error("nesting depth exceeds the limit ({0})")]
+    DepthLimit(usize),
     #[error("eof")]
     Eof,
 }
@@ -359,7 +401,10 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         self.parse_first_byte(b'l', Error::InvalidValue)?;
-        visitor.visit_seq(SeqAccess { de: self })
+        self.enter_container()?;
+        let r = visitor.visit_seq(SeqAccess { de: self });
+        self.depth -= 1;
+        r
     }
 
     fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
@@ -386,7 +431,10 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         self.parse_first_byte(b'd', Error::InvalidValue)?;
-        visitor.visit_map(MapAccess { de: self })
+        self.enter_container()?;
+        let r = visitor.visit_map(MapAccess { de: self });
+        self.depth -= 1;
+        r
     }
 
     fn deserialize_struct<V>(
@@ -620,9 +668,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use buffers::ByteBuf;
+    use buffers::{ByteBuf, ByteBufOwned};
 
-    use crate::{WithRawBytes, from_bytes};
+    use super::{DEFAULT_MAX_DEPTH, Error};
+    use crate::{BencodeDeserializer, BencodeValue, WithRawBytes, from_bytes};
+    use serde::Deserialize as _;
 
     #[test]
     fn test_deserialize_error_context() {
@@ -766,8 +816,67 @@ mod tests {
             from_bytes::<S>(b"d3:keyi42e6:valuesl5:hello5:worldee").unwrap(),
             S {
                 key: 42,
-                values: vec![ByteBuf(b"hello"), ByteBuf(b"world")]
+                values: vec![ByteBuf(b"hello"), ByteBuf(b"world")],
             }
         );
+    }
+
+    #[test]
+    fn test_nesting_at_default_limit_parses() {
+        fn nested(depth: usize) -> Vec<u8> {
+            let mut v = vec![b'l'; depth];
+            v.push(b'i');
+            v.extend_from_slice(b"42e");
+            v.extend(std::iter::repeat_n(b'e', depth));
+            v
+        }
+
+        // Exactly the limit parses fine (real torrents peak around depth 6).
+        let buf = nested(DEFAULT_MAX_DEPTH);
+        let v: BencodeValue<ByteBufOwned> = from_bytes(&buf).unwrap();
+        let mut cur = &v;
+        for _ in 0..DEFAULT_MAX_DEPTH {
+            cur = match cur {
+                BencodeValue::List(l) => &l[0],
+                other => panic!("unexpected shape at depth: {other:?}"),
+            };
+        }
+
+        // One past the limit is a clean error, not a stack overflow.
+        let buf = nested(DEFAULT_MAX_DEPTH + 1);
+        let e = from_bytes::<BencodeValue<ByteBufOwned>>(&buf).unwrap_err();
+        assert!(matches!(e.kind(), Error::DepthLimit(DEFAULT_MAX_DEPTH)));
+    }
+
+    #[test]
+    fn test_nesting_depth_limit_configurable() {
+        fn nested(depth: usize) -> Vec<u8> {
+            let mut v = vec![b'l'; depth];
+            v.extend_from_slice(b"i0e");
+            v.extend(std::iter::repeat_n(b'e', depth));
+            v
+        }
+
+        // Lower limit rejects shallower input; higher limit accepts it.
+        let buf = nested(10);
+        let mut de = BencodeDeserializer::new_from_buf(&buf).with_max_depth(5);
+        let e: Error = BencodeValue::<ByteBufOwned>::deserialize(&mut de).unwrap_err();
+        assert!(matches!(e, Error::DepthLimit(5)));
+
+        let buf = nested(10);
+        let mut de = BencodeDeserializer::new_from_buf(&buf).with_max_depth(usize::MAX);
+        let v: BencodeValue<ByteBufOwned> = serde::Deserialize::deserialize(&mut de).unwrap();
+        drop(v);
+    }
+
+    #[test]
+    fn test_nesting_unbalanced_deep_no_overflow() {
+        // A payload of bare 'l' bytes (no terminators): the old parser
+        // recursed before discovering the structure never closes. Must be
+        // a clean error at any size.
+        let buf = vec![b'l'; 1 << 20];
+        let mut de = BencodeDeserializer::new_from_buf(&buf);
+        let r: Result<BencodeValue<ByteBufOwned>, _> = serde::Deserialize::deserialize(&mut de);
+        assert!(r.is_err());
     }
 }

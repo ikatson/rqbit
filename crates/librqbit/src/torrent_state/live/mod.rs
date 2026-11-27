@@ -217,6 +217,14 @@ pub struct TorrentStateLive {
 }
 
 impl TorrentStateLive {
+    fn max_request_window(&self) -> usize {
+        self.shared
+            .options
+            .peer_max_request_window
+            .unwrap_or(DEFAULT_PEER_REQUEST_WINDOW)
+            .max(1)
+    }
+
     pub(crate) fn new(
         paused: TorrentStatePaused,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
@@ -475,7 +483,7 @@ impl TorrentStateLive {
             addr: checked_peer.addr,
             incoming: true,
             on_bitfield_notify: Default::default(),
-            flow_control: Mutex::new(PeerFlowControl::default()),
+            flow_control: Mutex::new(PeerFlowControl::new(self.max_request_window())),
             state: self.clone(),
             tx,
             counters,
@@ -539,7 +547,7 @@ impl TorrentStateLive {
             addr,
             incoming: false,
             on_bitfield_notify: Default::default(),
-            flow_control: Mutex::new(PeerFlowControl::default()),
+            flow_control: Mutex::new(PeerFlowControl::new(state.max_request_window())),
             state: state.clone(),
             tx,
             counters,
@@ -802,9 +810,13 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let mut g = self.lock_write("update_only_files");
-        let pt = g.get_pieces_mut()?;
-        let hns = pt.update_only_files(&self.metadata.file_infos, only_files)?;
+        let hns = self
+            .lock_write("update_only_files")
+            .get_pieces_mut()?
+            .update_only_files(&self.metadata.file_infos, only_files)?;
+        // With the state lock released. A dying peer holds its shard of the peer table
+        // while it asks whether the torrent is finished (on_peer_died), so touching the
+        // table under the state lock is the reverse order, and the two deadlock.
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
@@ -986,11 +998,11 @@ struct PeerFlowControl {
     request_window: usize,
 }
 
-impl Default for PeerFlowControl {
-    fn default() -> Self {
+impl PeerFlowControl {
+    fn new(max_request_window: usize) -> Self {
         Self {
             i_am_choked: true,
-            request_window: DEFAULT_PEER_REQUEST_WINDOW,
+            request_window: max_request_window,
         }
     }
 }
@@ -1151,7 +1163,7 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         if let Some(reqq) = hs.reqq.and_then(|reqq| usize::try_from(reqq).ok())
             && reqq > 0
         {
-            let request_window = reqq.min(DEFAULT_PEER_REQUEST_WINDOW);
+            let request_window = reqq.min(self.state.max_request_window());
             let mut flow = self.lock_flow_control("update request window");
             if flow.request_window != request_window {
                 debug!(
@@ -1204,18 +1216,12 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         self.state.get_approx_have_bytes() > 0
     }
 
-    fn should_transmit_have(&self, id: ValidPieceIndex) -> bool {
-        if self.state.shared.options.disable_upload() {
-            return false;
-        }
-        let have = self
-            .state
-            .peers
-            .with_live(self.addr, |l| {
-                l.bitfield.get(id.get_usize()).map(|p| *p).unwrap_or(true)
-            })
-            .unwrap_or(true);
-        !have
+    fn should_transmit_have(&self, _id: ValidPieceIndex) -> bool {
+        // Announce every completed piece, also one the peer's bitfield already claims. Leaving
+        // such HAVEs out makes us look like a peer that doesn't report its progress, which
+        // anti-leech tools (e.g. PeerBanHelper's ProgressCheatBlocker) take as a cheating
+        // client and ban.
+        !self.state.shared.options.disable_upload()
     }
 
     fn update_my_extended_handshake(
@@ -1530,11 +1536,10 @@ impl PeerHandler {
                     }
                 };
                 trace!("updated bitfield with have={}", have);
-                if let Some(true) = live
-                    .bitfield
-                    .get(..self.state.lengths.total_pieces() as usize)
-                    .map(|s| s.all())
-                {
+                self.state
+                    .peers
+                    .update_seeder_flag(live, self.state.lengths.total_pieces() as usize);
+                if live.seeder {
                     debug!("peer has full torrent");
                 }
             });
@@ -1556,7 +1561,9 @@ impl PeerHandler {
         {
             debug!("peer has full torrent");
         }
-        self.state.peers.update_bitfield(self.addr, bf);
+        self.state
+            .peers
+            .update_bitfield(self.addr, bf, self.state.lengths.total_pieces() as usize);
         self.on_bitfield_notify.notify_waiters();
         Ok(())
     }
@@ -1994,7 +2001,7 @@ impl PeerHandler {
             .div_ceil(CHUNK_SIZE as u64)
             .try_into()?;
 
-        if piece_id as usize > total_pieces {
+        if piece_id as usize >= total_pieces {
             bail!("piece out of bounds")
         }
 

@@ -335,6 +335,9 @@ impl ManagedTorrent {
     }
 
     pub async fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<FileStream> {
+        // Streams need live or paused state, so wait out the initial check
+        // of existing data instead of failing while it runs.
+        self.wait_until_initialized().await?;
         let metadata = self
             .metadata
             .load_full()

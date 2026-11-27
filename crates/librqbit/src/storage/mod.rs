@@ -30,6 +30,9 @@ pub mod examples;
 #[cfg(feature = "storage_middleware")]
 pub mod middleware;
 
+#[cfg(test)]
+pub(crate) mod test_util;
+
 use std::{
     any::{Any, TypeId},
     io::IoSlice,
@@ -58,6 +61,11 @@ pub trait StorageFactory: Send + Sync + Any {
         Ok(storage)
     }
 
+    /// Whether this factory, or the one it ultimately wraps, is of the given type.
+    ///
+    /// It has to survive both wrapping and boxing: this is how e.g. session persistence
+    /// asks whether it's dealing with a FilesystemStorageFactory, and a middleware in
+    /// between must not hide it. A middleware forwards this to what it wraps.
     fn is_type_id(&self, type_id: TypeId) -> bool {
         Self::type_id(self) == type_id
     }
@@ -89,7 +97,7 @@ impl<SF: StorageFactory> StorageFactoryExt for SF {
             }
 
             fn is_type_id(&self, type_id: TypeId) -> bool {
-                self.sf.type_id() == type_id
+                self.sf.is_type_id(type_id)
             }
 
             fn clone_box(&self) -> BoxStorageFactory {
@@ -110,6 +118,10 @@ impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<U::Storage> {
         (**self).create(shared, metadata)
+    }
+
+    fn is_type_id(&self, type_id: TypeId) -> bool {
+        (**self).is_type_id(type_id)
     }
 
     fn clone_box(&self) -> BoxStorageFactory {
@@ -179,6 +191,15 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
         (**self).pwrite_all(file_id, offset, buf)
     }
 
+    fn pwrite_all_vectored(
+        &self,
+        file_id: usize,
+        offset: u64,
+        bufs: [IoSlice<'_>; 2],
+    ) -> anyhow::Result<usize> {
+        (**self).pwrite_all_vectored(file_id, offset, bufs)
+    }
+
     fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()> {
         (**self).remove_file(file_id, filename)
     }
@@ -205,5 +226,79 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
         (**self).on_piece_completed(piece_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::any::TypeId;
+
+    use super::{
+        BoxStorageFactory, StorageFactory, StorageFactoryExt,
+        filesystem::FilesystemStorageFactory,
+        test_util::{Probe, assert_forwards_defaults},
+    };
+    use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
+
+    // A middleware like the ones in storage::middleware: it wraps another factory and
+    // forwards is_type_id, so that what it wraps stays recognizable through it.
+    #[derive(Clone)]
+    struct Middleware<U> {
+        underlying_factory: U,
+    }
+
+    impl<U: StorageFactory + Clone> StorageFactory for Middleware<U> {
+        type Storage = U::Storage;
+
+        fn create(
+            &self,
+            shared: &ManagedTorrentShared,
+            metadata: &TorrentMetadata,
+        ) -> anyhow::Result<Self::Storage> {
+            self.underlying_factory.create(shared, metadata)
+        }
+
+        fn is_type_id(&self, type_id: TypeId) -> bool {
+            self.underlying_factory.is_type_id(type_id)
+        }
+
+        fn clone_box(&self) -> BoxStorageFactory {
+            self.clone().boxed()
+        }
+    }
+
+    #[test]
+    fn test_is_type_id_survives_boxing() {
+        let fs = TypeId::of::<FilesystemStorageFactory>();
+
+        assert!(FilesystemStorageFactory::default().is_type_id(fs));
+        // Box<U> has to forward, or the answer is the TypeId of the box itself.
+        assert!(FilesystemStorageFactory::default().boxed().is_type_id(fs));
+
+        // And boxed() has to forward too, or every middleware's override is lost and the
+        // answer is the middleware's own type.
+        let wrapped = Middleware {
+            underlying_factory: FilesystemStorageFactory::default(),
+        };
+        assert!(wrapped.is_type_id(fs));
+        assert!(wrapped.clone().boxed().is_type_id(fs));
+        assert!(wrapped.boxed().clone_box().is_type_id(fs));
+
+        // A factory that isn't the one asked about still says so.
+        assert!(
+            !Middleware {
+                underlying_factory: FilesystemStorageFactory::default(),
+            }
+            .boxed()
+            .is_type_id(TypeId::of::<Middleware<FilesystemStorageFactory>>())
+        );
+    }
+
+    // What a torrent holds is a Box<dyn TorrentStorage>, so a method this impl doesn't
+    // forward is one no storage in rqbit ever gets asked.
+    #[test]
+    fn test_the_defaulted_methods_survive_boxing() {
+        let boxed: Box<Probe> = Box::default();
+        assert_forwards_defaults(&boxed, &boxed);
     }
 }
